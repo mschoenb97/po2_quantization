@@ -10,7 +10,6 @@ import torch.nn.functional as F
 
 from functools import partial
 from typing import Any, Callable, List, Optional, Type, Union, Tuple
-from tqdm.notebook import trange
 import matplotlib.pyplot as plt
 from copy import deepcopy
 import re
@@ -22,8 +21,11 @@ import numpy as np
 import pickle
 import collections
 
+from models import resnet20, resnet32, resnet44, resnet56
+from quantizers import PowerOfTwoQuantizer, PowerOfTwoPlusQuantizer
 
-def save_dict(state_dict):
+
+def save_dict(state_dict, dir):
     print("saving state_dict...")
     dict_to_save = {
         k: {x: y for x, y in v.items() if x != "model"} for k, v in state_dict.items()
@@ -32,7 +34,7 @@ def save_dict(state_dict):
         pickle.dump(dict_to_save, f)
 
 
-def load_dict():
+def load_dict(dir, device):
     if os.path.exists(f"{dir}/state_dict.pkl"):
         print(f"loading state_dict {dir}")
         with open(f"{dir}/state_dict.pkl", "rb") as f:

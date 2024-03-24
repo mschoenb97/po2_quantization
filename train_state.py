@@ -22,7 +22,7 @@ import pickle
 import collections
 
 from models import resnet20, resnet32, resnet44, resnet56
-from quantizers import PowerOfTwoQuantizer, PowerOfTwoPlusQuantizer
+from quantizers import PowerOfTwoQuantizer, PowerOfTwoPlusQuantizer, LinearPowerOfTwoQuantizer, LinearPowerOfTwoPlusQuantizer
 
 
 def save_dict(state_dict, dir):
@@ -49,25 +49,27 @@ def load_dict(dir, device, bits_to_try):
         "resnet56": resnet56,
     }
 
+    quantizers = {
+        'po2': PowerOfTwoQuantizer,
+        'po2+': PowerOfTwoPlusQuantizer,
+        'linear': LinearPowerOfTwoQuantizer,
+        'linear+': LinearPowerOfTwoPlusQuantizer,
+    }
+
     for model_name, model_fn in base_models.items():
         state_dict[model_name]["model"] = model_fn()
         state_dict[model_name]["is_quantized"] = False
 
     for bits in bits_to_try:
         for base_model_name, model_fn in base_models.items():
-            state_dict[f"{base_model_name}_po2_{bits}"]["model"] = model_fn(
-                quantize_fn=PowerOfTwoQuantizer, fsr=1, bitwidth=bits - 1
-            )
-            state_dict[f"{base_model_name}_po2_{bits}"]["fp_model"] = base_model_name
-            state_dict[f"{base_model_name}_po2_{bits}"]["is_quantized"] = True
-            state_dict[f"{base_model_name}_po2_{bits}"]["bits"] = bits
+            for quantizer_name, quantizer in quantizers.items()
+                state_dict[f"{base_model_name}_{quantizer_name}_{bits}"]["model"] = model_fn(
+                    quantize_fn=quantizer, bits=bits
+                )
+                state_dict[f"{base_model_name}_{quantizer_name}_{bits}"]["fp_model"] = base_model_name
+                state_dict[f"{base_model_name}_{quantizer_name}_{bits}"]["is_quantized"] = True
+                state_dict[f"{base_model_name}_{quantizer_name}_{bits}"]["bits"] = bits
 
-            state_dict[f"{base_model_name}_po2+_{bits}"]["model"] = model_fn(
-                quantize_fn=PowerOfTwoPlusQuantizer, fsr=1, bitwidth=bits - 1
-            )
-            state_dict[f"{base_model_name}_po2+_{bits}"]["fp_model"] = base_model_name
-            state_dict[f"{base_model_name}_po2+_{bits}"]["is_quantized"] = True
-            state_dict[f"{base_model_name}_po2+_{bits}"]["bits"] = bits
         
     for model_name, model_dict in state_dict.items():
         model_dict["trained"] = False

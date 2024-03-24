@@ -34,45 +34,39 @@ def save_dict(state_dict, dir):
         pickle.dump(dict_to_save, f)
 
 
-def load_dict(dir, device):
+def load_dict(dir, device, bits_to_try):
     if os.path.exists(f"{dir}/state_dict.pkl"):
         print(f"loading state_dict {dir}")
         with open(f"{dir}/state_dict.pkl", "rb") as f:
             state_dict = pickle.load(f)
     else:
-        state_dict = collections.defaultdict(dict)
+        state_dict = collections.defaultdict(lambda: collections.defaultdict(dict))
+    
+    base_models = {
+        "resnet20": resnet20,
+        "resnet32": resnet32,
+        "resnet44": resnet44,
+        "resnet56": resnet56,
+    }
 
-    state_dict["resnet20"]["model"] = resnet20()
-    state_dict["resnet32"]["model"] = resnet32()
-    state_dict["resnet44"]["model"] = resnet44()
-    state_dict["resnet56"]["model"] = resnet56()
+    for model_name, model_fn in base_models.items():
+        state_dict[model_name]["model"] = model_fn()
+        state_dict[model_name]["is_quantized"] = False
 
-    # QAT: 8 bit
-    state_dict["resnet20_po2_ptq8"]["model"] = resnet20(
-        quantize_fn=PowerOfTwoQuantizer, fsr=1, bitwidth=7
-    )
-    state_dict["resnet20_po2+_ptq8"]["model"] = resnet20(
-        quantize_fn=PowerOfTwoPlusQuantizer, fsr=1, bitwidth=7
-    )
-    state_dict["resnet32_po2_ptq8"]["model"] = resnet32(
-        quantize_fn=PowerOfTwoQuantizer, fsr=1, bitwidth=7
-    )
-    state_dict["resnet32_po2+_ptq8"]["model"] = resnet32(
-        quantize_fn=PowerOfTwoPlusQuantizer, fsr=1, bitwidth=7
-    )
-    state_dict["resnet44_po2_ptq8"]["model"] = resnet44(
-        quantize_fn=PowerOfTwoQuantizer, fsr=1, bitwidth=7
-    )
-    state_dict["resnet44_po2+_ptq8"]["model"] = resnet44(
-        quantize_fn=PowerOfTwoPlusQuantizer, fsr=1, bitwidth=7
-    )
-    state_dict["resnet56_po2_ptq8"]["model"] = resnet56(
-        quantize_fn=PowerOfTwoQuantizer, fsr=1, bitwidth=7
-    )
-    state_dict["resnet56_po2+_ptq8"]["model"] = resnet56(
-        quantize_fn=PowerOfTwoPlusQuantizer, fsr=1, bitwidth=7
-    )
+    for bits in bits_to_try:
+        for base_model_name, model_fn in base_models.items():
+            state_dict[f"{base_model_name}_po2{bits}"]["model"] = model_fn(
+                quantize_fn=PowerOfTwoQuantizer, fsr=1, bitwidth=bits - 1
+            )
+            state_dict[f"{base_model_name}_po2{bits}"]["fp_model"] = base_model_name
+            state_dict[f"{base_model_name}_po2{bits}"]["is_quantized"] = True
 
+            state_dict[f"{base_model_name}_po2+{bits}"]["model"] = model_fn(
+                quantize_fn=PowerOfTwoPlusQuantizer, fsr=1, bitwidth=bits - 1
+            )
+            state_dict[f"{base_model_name}_po2+{bits}"]["fp_model"] = base_model_name
+            state_dict[f"{base_model_name}_po2+{bits}"]["is_quantized"] = True
+        
     for model_name, model_dict in state_dict.items():
         model_dict["trained"] = False
         model_path = f"{dir}/{model_name}_cifar10.pth"

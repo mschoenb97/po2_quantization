@@ -87,7 +87,6 @@ class LinearPowerOfTwoQuantizer(torch.autograd.Function):
         assert delta.shape[0] == input.shape[1]
 
         q = quantize_per_filter(input, delta, bits) / delta.view(-1, 1, 1)
-        print(q.shape, input.shape)
         assert q.shape == input.shape
 
         for _ in range(num_iters):
@@ -96,7 +95,6 @@ class LinearPowerOfTwoQuantizer(torch.autograd.Function):
             qTw = torch.sum(q * input, dim=[0, 2, 3])
             qTq = torch.sum(q * q, dim=[0, 2, 3])
             delta = qTw / qTq
-            print(delta.shape, input.shape[1])
             assert delta.shape[0] == input.shape[1]
 
             delta = 2 ** torch.round(
@@ -118,8 +116,6 @@ class LinearPowerOfTwoQuantizer(torch.autograd.Function):
 
 class LinearPowerOfTwoPlusQuantizer(torch.autograd.Function):
 
-    conv_dim = [0, 2, 3]
-
     @staticmethod
     def forward(ctx, input: torch.Tensor, num_iters: int = 10, bits: int = 7):
 
@@ -133,7 +129,6 @@ class LinearPowerOfTwoPlusQuantizer(torch.autograd.Function):
         assert delta.shape[0] == input.shape[1]
 
         q = quantize_per_filter(input, delta, bits) / delta.view(-1, 1, 1)
-        print(q.shape, input.shape)
         assert q.shape == input.shape
 
         for _ in range(num_iters):
@@ -142,7 +137,6 @@ class LinearPowerOfTwoPlusQuantizer(torch.autograd.Function):
             qTw = torch.sum(q * input, dim=[0, 2, 3])
             qTq = torch.sum(q * q, dim=[0, 2, 3])
             delta = qTw / qTq
-            print(delta.shape, input.shape[1])
             assert delta.shape[0] == input.shape[1]
 
             delta = 2 ** torch.round(

@@ -222,7 +222,7 @@ if __name__ == "__main__":
 
     # bits_to_try = [2, 3, 4, 5, 8]
     bits_to_try = [2, 4]
-    state_dict = load_dict(dir, device, bits_to_try)
+    state_dict = load_dict(dir, device, bits_to_try, test=test)
 
     # QAT
 

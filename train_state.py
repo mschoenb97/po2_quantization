@@ -39,7 +39,7 @@ def save_dict(state_dict, dir):
         pickle.dump(dict_to_save, f)
 
 
-def load_dict(dir, device, bits_to_try):
+def load_dict(dir, device, bits_to_try, test=False):
     if os.path.exists(f"{dir}/state_dict.pkl"):
         print(f"loading state_dict {dir}")
         with open(f"{dir}/state_dict.pkl", "rb") as f:
@@ -47,12 +47,17 @@ def load_dict(dir, device, bits_to_try):
     else:
         state_dict = collections.defaultdict(lambda: collections.defaultdict(dict))
 
-    base_models = {
-        "resnet20": resnet20,
-        "resnet32": resnet32,
-        "resnet44": resnet44,
-        "resnet56": resnet56,
-    }
+    if test:
+        base_models = {
+            "resnet20": resnet20
+        }
+    else:
+      base_models = {
+          "resnet20": resnet20,
+          "resnet32": resnet32,
+          "resnet44": resnet44,
+          "resnet56": resnet56,
+      }
 
     quantizers = {
         "po2": PowerOfTwoQuantizer,

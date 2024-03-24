@@ -23,6 +23,7 @@ import collections
 
 DOWNLOAD = False
 
+
 def get_cifar_dataloaders(dir: str, batch_size: int, num_workers: int, test=False):
 
     batch_size = 128
@@ -47,7 +48,7 @@ def get_cifar_dataloaders(dir: str, batch_size: int, num_workers: int, test=Fals
     trainset = torchvision.datasets.CIFAR10(
         root=f"{dir}/data", train=True, download=DOWNLOAD, transform=train_transform
     )
-    
+
     testset = torchvision.datasets.CIFAR10(
         root=f"{dir}/data", train=False, download=DOWNLOAD, transform=test_transform
     )
@@ -57,7 +58,7 @@ def get_cifar_dataloaders(dir: str, batch_size: int, num_workers: int, test=Fals
         # For testing, sample a subset for both train and test
         train_indices = torch.randperm(len(trainset))[:test_subset_size]
         test_indices = torch.randperm(len(testset))[:test_subset_size]
-        
+
         trainset = Subset(trainset, train_indices)
         testset = Subset(testset, test_indices)
 

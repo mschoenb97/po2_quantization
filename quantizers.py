@@ -25,13 +25,15 @@ import collections
 
 class PowerOfTwoQuantizer(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, input: torch.Tensor, fsr: int = 1, bitwidth: int = 7):
+    def forward(ctx, input: torch.Tensor, bits: int = 4, fsr: int = 1):
         sign = torch.sign(input)
         scale = torch.max(torch.abs(input))
         normalized_input = input / scale
         abs_normalized_input = torch.abs(normalized_input)
         quantized_output = torch.clamp(
-            torch.round(torch.log2(abs_normalized_input)), fsr - 2**bitwidth, fsr - 1
+            torch.round(torch.log2(abs_normalized_input)),
+            fsr - 2 ** (bits - 1),
+            fsr - 1,
         )
         log_quant = 2**quantized_output
         return log_quant * sign * scale
@@ -43,14 +45,14 @@ class PowerOfTwoQuantizer(torch.autograd.Function):
 
 class PowerOfTwoPlusQuantizer(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, input: torch.Tensor, fsr: int = 1, bitwidth: int = 7):
+    def forward(ctx, input: torch.Tensor, bits: int = 4, fsr: int = 1):
         sign = torch.sign(input)
         scale = torch.max(torch.abs(input))
         normalized_input = input / scale
         abs_normalized_input = torch.abs(normalized_input)
         quantized_output = torch.clamp(
             torch.round(torch.log2(abs_normalized_input / 1.5) + 0.5),
-            fsr - 2**bitwidth,
+            fsr - 2 ** (bits - 1),
             fsr - 1,
         )
         log_quant = 2**quantized_output
@@ -75,7 +77,7 @@ def quantize_per_filter(
 class LinearPowerOfTwoQuantizer(torch.autograd.Function):
 
     @staticmethod
-    def forward(ctx, input: torch.Tensor, num_iters: int = 10, bits: int = 7):
+    def forward(ctx, input: torch.Tensor, bits: int = 4, num_iters: int = 10):
 
         max = torch.max(
             torch.max(torch.max(input, dim=3).values, dim=2).values, dim=0
@@ -117,7 +119,7 @@ class LinearPowerOfTwoQuantizer(torch.autograd.Function):
 class LinearPowerOfTwoPlusQuantizer(torch.autograd.Function):
 
     @staticmethod
-    def forward(ctx, input: torch.Tensor, num_iters: int = 10, bits: int = 7):
+    def forward(ctx, input: torch.Tensor, bits: int = 4, num_iters: int = 10):
 
         max = torch.max(
             torch.max(torch.max(input, dim=3).values, dim=2).values, dim=0
@@ -175,11 +177,11 @@ if __name__ == "__main__":
         )
 
 
-def quantize_model(model, quantizer, fsr: int = 1, bitwidth: int = 7):
+def quantize_model(model, quantizer, fsr: int = 1, bits: int = 4):
     with torch.no_grad():
         for name, param in model.named_parameters():
             if "conv" in name and "layer" in name:
-                quantized_param = quantizer.forward(None, param, fsr, bitwidth)
+                quantized_param = quantizer.forward(None, param, bits=bits)
                 param.copy_(quantized_param)
 
 

@@ -22,7 +22,12 @@ import pickle
 import collections
 
 from models import resnet20, resnet32, resnet44, resnet56
-from quantizers import PowerOfTwoQuantizer, PowerOfTwoPlusQuantizer, LinearPowerOfTwoQuantizer, LinearPowerOfTwoPlusQuantizer
+from quantizers import (
+    PowerOfTwoQuantizer,
+    PowerOfTwoPlusQuantizer,
+    LinearPowerOfTwoQuantizer,
+    LinearPowerOfTwoPlusQuantizer,
+)
 
 
 def save_dict(state_dict, dir):
@@ -41,7 +46,7 @@ def load_dict(dir, device, bits_to_try):
             state_dict = pickle.load(f)
     else:
         state_dict = collections.defaultdict(lambda: collections.defaultdict(dict))
-    
+
     base_models = {
         "resnet20": resnet20,
         "resnet32": resnet32,
@@ -50,10 +55,10 @@ def load_dict(dir, device, bits_to_try):
     }
 
     quantizers = {
-        'po2': PowerOfTwoQuantizer,
-        'po2+': PowerOfTwoPlusQuantizer,
-        'linear': LinearPowerOfTwoQuantizer,
-        'linear+': LinearPowerOfTwoPlusQuantizer,
+        "po2": PowerOfTwoQuantizer,
+        "po2+": PowerOfTwoPlusQuantizer,
+        "linear": LinearPowerOfTwoQuantizer,
+        "linear+": LinearPowerOfTwoPlusQuantizer,
     }
 
     for model_name, model_fn in base_models.items():
@@ -62,15 +67,18 @@ def load_dict(dir, device, bits_to_try):
 
     for bits in bits_to_try:
         for base_model_name, model_fn in base_models.items():
-            for quantizer_name, quantizer in quantizers.items()
-                state_dict[f"{base_model_name}_{quantizer_name}_{bits}"]["model"] = model_fn(
-                    quantize_fn=quantizer, bits=bits
+            for quantizer_name, quantizer in quantizers.items():
+                state_dict[f"{base_model_name}_{quantizer_name}_{bits}"]["model"] = (
+                    model_fn(quantize_fn=quantizer, bits=bits)
                 )
-                state_dict[f"{base_model_name}_{quantizer_name}_{bits}"]["fp_model"] = base_model_name
-                state_dict[f"{base_model_name}_{quantizer_name}_{bits}"]["is_quantized"] = True
+                state_dict[f"{base_model_name}_{quantizer_name}_{bits}"][
+                    "fp_model"
+                ] = base_model_name
+                state_dict[f"{base_model_name}_{quantizer_name}_{bits}"][
+                    "is_quantized"
+                ] = True
                 state_dict[f"{base_model_name}_{quantizer_name}_{bits}"]["bits"] = bits
 
-        
     for model_name, model_dict in state_dict.items():
         model_dict["trained"] = False
         model_path = f"{dir}/{model_name}_cifar10.pth"

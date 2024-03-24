@@ -55,17 +55,19 @@ def load_dict(dir, device, bits_to_try):
 
     for bits in bits_to_try:
         for base_model_name, model_fn in base_models.items():
-            state_dict[f"{base_model_name}_po2{bits}"]["model"] = model_fn(
+            state_dict[f"{base_model_name}_po2_{bits}"]["model"] = model_fn(
                 quantize_fn=PowerOfTwoQuantizer, fsr=1, bitwidth=bits - 1
             )
-            state_dict[f"{base_model_name}_po2{bits}"]["fp_model"] = base_model_name
-            state_dict[f"{base_model_name}_po2{bits}"]["is_quantized"] = True
+            state_dict[f"{base_model_name}_po2_{bits}"]["fp_model"] = base_model_name
+            state_dict[f"{base_model_name}_po2_{bits}"]["is_quantized"] = True
+            state_dict[f"{base_model_name}_po2_{bits}"]["bits"] = bits
 
-            state_dict[f"{base_model_name}_po2+{bits}"]["model"] = model_fn(
+            state_dict[f"{base_model_name}_po2+_{bits}"]["model"] = model_fn(
                 quantize_fn=PowerOfTwoPlusQuantizer, fsr=1, bitwidth=bits - 1
             )
-            state_dict[f"{base_model_name}_po2+{bits}"]["fp_model"] = base_model_name
-            state_dict[f"{base_model_name}_po2+{bits}"]["is_quantized"] = True
+            state_dict[f"{base_model_name}_po2+_{bits}"]["fp_model"] = base_model_name
+            state_dict[f"{base_model_name}_po2+_{bits}"]["is_quantized"] = True
+            state_dict[f"{base_model_name}_po2+_{bits}"]["bits"] = bits
         
     for model_name, model_dict in state_dict.items():
         model_dict["trained"] = False

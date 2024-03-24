@@ -142,21 +142,27 @@ def compute_test(model, test=False):
     return correct / total
 
 
-def quantize_loop(model: nn.Module, bits_to_try: List[int], quantizer, test=False):
+def quantize_loop(state_dict, model_name, quantizer, test=False):
+    fp_model_name = state_dict[model_name]["fp_model"]
+    model = state_dict[fp_model_name]["model"]
+    bits = state_dict[model_name]["bits"]
+
     accuracies = []
-    for bit in bits_to_try:
-        model_copy = deepcopy(model)
-        quantize_model(model_copy, quantizer, 1, bit - 1)
-        accuracies.append(compute_test(model_copy, test=test))
+    model_copy = deepcopy(model)
+    quantize_model(model_copy, quantizer, 1, bits - 1)
+    accuracies.append(compute_test(model_copy, test=test))
 
     return accuracies
 
-def train_models(state_dict, dir, test=False):
+def _train_models(state_dict, dir, qat, test=False):
     
     num_epochs = 1 if test else 164
 
     for model_name, model_dict in state_dict.items():
-
+        
+        if model_dict["is_quantized"] != qat:
+            continue
+        
         model = model_dict["model"]
 
         if model_dict["trained"]:
@@ -173,6 +179,19 @@ def train_models(state_dict, dir, test=False):
 
         # test_acc = model_dict["test_acc"]
         print(f"{model_name} test accuracy: {test_acc:.4f}")
+
+
+def train_models(state_dict, dir, test=False):
+    _train_models(state_dict, dir, qat=False, test=test)
+    
+    for model_dict in state_dict.values():
+        if model_dict["quantized"]:
+            fp_model_name = model_dict["fp_model"]
+            fp_model = state_dict[fp_model_name]["model"]
+            # copy fp_model params to quantized model
+            model_dict["model"].load_state_dict(fp_model.state_dict())
+
+    _train_models(state_dict, dir, qat=True, test=test)
 
     save_dict(state_dict, dir)
 
@@ -200,12 +219,15 @@ if __name__ == "__main__":
     # PTQ
     
     for model_name, model_dict in state_dict.items():
+        
+        if not model_dict["is_quantized"]:
+            continue
 
         print(f"Quantizing {model_name} to {bits_to_try} bits")
 
         model = model_dict["model"]
-        test_acc_po2 = quantize_loop(model, bits_to_try, PowerOfTwoQuantizer, test=test)
-        test_acc_po2_plus = quantize_loop(model, bits_to_try, PowerOfTwoPlusQuantizer, test=test)
+        test_acc_po2 = quantize_loop(state_dict, model_name, PowerOfTwoQuantizer, test=test)
+        test_acc_po2_plus = quantize_loop(state_dict, model_name, PowerOfTwoPlusQuantizer, test=test)
 
         model_dict["test_acc_po2"] = test_acc_po2
         model_dict["test_acc_po2+"] = test_acc_po2_plus

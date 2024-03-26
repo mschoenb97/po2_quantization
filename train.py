@@ -80,7 +80,7 @@ def train_model(
             # forward pass
             outputs = model(inputs)
             loss = criterion(outputs, labels)
-            running_loss += loss.item
+            running_loss += loss.item()
 
             # calculate accuracy
             with torch.no_grad():

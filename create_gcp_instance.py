@@ -160,7 +160,7 @@ def main(
     gpu_count: int = 1,
     machine_type: str = "n1-standard-8",
     disk_source_image: str = "projects/ml-images/global/images/c0-deeplearning-common-cu121-v20240306-debian-11",
-    disk_size: int = 50,
+    disk_size: int = 200,
     num_zones_to_check: int = 30,
     *,
     project_id: str,

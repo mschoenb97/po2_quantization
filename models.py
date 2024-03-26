@@ -1,26 +1,7 @@
 import torch
 import torch.nn as nn
 from torch import Tensor
-
-import torchvision
-import torchvision.transforms as transforms
-from torch.utils.data import DataLoader
-import torch.optim as optim
-import torch.nn.functional as F
-
-from functools import partial
-from typing import Any, Callable, List, Optional, Type, Union, Tuple
-from tqdm.notebook import trange
-import matplotlib.pyplot as plt
-from copy import deepcopy
-import re
-import os
-import seaborn as sns
-import pandas as pd
-import random
-import numpy as np
-import pickle
-import collections
+from typing import Any, Callable, List, Optional, Tuple
 
 
 class QuantizedConv2d(nn.Conv2d):

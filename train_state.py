@@ -1,23 +1,5 @@
 import torch
-import torch.nn as nn
-from torch import Tensor
-
-import torchvision
-import torchvision.transforms as transforms
-from torch.utils.data import DataLoader
-import torch.optim as optim
-import torch.nn.functional as F
-
-from functools import partial
-from typing import Any, Callable, List, Optional, Type, Union, Tuple
-import matplotlib.pyplot as plt
-from copy import deepcopy
-import re
 import os
-import seaborn as sns
-import pandas as pd
-import random
-import numpy as np
 import pickle
 import collections
 
@@ -48,16 +30,14 @@ def load_dict(dir, device, bits_to_try, test=False):
         state_dict = collections.defaultdict(lambda: collections.defaultdict(dict))
 
     if test:
-        base_models = {
-            "resnet20": resnet20
-        }
+        base_models = {"resnet20": resnet20}
     else:
-      base_models = {
-          "resnet20": resnet20,
-          "resnet32": resnet32,
-          "resnet44": resnet44,
-          "resnet56": resnet56,
-      }
+        base_models = {
+            "resnet20": resnet20,
+            "resnet32": resnet32,
+            "resnet44": resnet44,
+            "resnet56": resnet56,
+        }
 
     quantizers = {
         "po2": PowerOfTwoQuantizer,

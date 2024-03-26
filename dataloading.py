@@ -1,30 +1,12 @@
 import torch
-import torch.nn as nn
-from torch import Tensor
-
 import torchvision
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader, Subset
-import torch.optim as optim
-import torch.nn.functional as F
-
-from functools import partial
-from typing import Any, Callable, List, Optional, Type, Union, Tuple
-import matplotlib.pyplot as plt
-from copy import deepcopy
-import re
-import os
-import seaborn as sns
-import pandas as pd
-import random
-import numpy as np
-import pickle
-import collections
-
-DOWNLOAD = False
 
 
-def get_cifar_dataloaders(dir: str, batch_size: int, num_workers: int, test=False):
+def get_cifar_dataloaders(
+    dir: str, batch_size: int, num_workers: int, test_run: bool = False
+):
 
     batch_size = 128
     num_workers = 2
@@ -46,19 +28,18 @@ def get_cifar_dataloaders(dir: str, batch_size: int, num_workers: int, test=Fals
     )
 
     trainset = torchvision.datasets.CIFAR10(
-        root=f"{dir}/data", train=True, download=DOWNLOAD, transform=train_transform
+        root=f"{dir}/data", train=True, download=True, transform=train_transform
     )
 
     testset = torchvision.datasets.CIFAR10(
-        root=f"{dir}/data", train=False, download=DOWNLOAD, transform=test_transform
+        root=f"{dir}/data", train=False, download=True, transform=test_transform
     )
 
-    if test:
+    # for testing, sample a subset for both train and test
+    if test_run:
         test_subset_size = 10
-        # For testing, sample a subset for both train and test
         train_indices = torch.randperm(len(trainset))[:test_subset_size]
         test_indices = torch.randperm(len(testset))[:test_subset_size]
-
         trainset = Subset(trainset, train_indices)
         testset = Subset(testset, test_indices)
 

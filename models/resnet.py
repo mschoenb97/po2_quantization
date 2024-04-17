@@ -275,7 +275,7 @@ class ResNet(nn.Module):
         return quantization_error, numel
 
 
-def resnet20(
+def ResNet20(
     *,
     n: int = 3,
     num_classes: int = 10,
@@ -294,7 +294,7 @@ def resnet20(
     )
 
 
-def resnet32(
+def ResNet32(
     *,
     n: int = 5,
     num_classes: int = 10,
@@ -313,7 +313,7 @@ def resnet32(
     )
 
 
-def resnet44(
+def ResNet44(
     *,
     n: int = 7,
     num_classes: int = 10,
@@ -332,7 +332,7 @@ def resnet44(
     )
 
 
-def resnet56(
+def ResNet56(
     *,
     n: int = 9,
     num_classes: int = 10,

@@ -7,13 +7,13 @@ from torch.utils.data.distributed import DistributedSampler
 def get_dataloaders(
     dataset: str, data_dir: str, batch_size: int, num_workers: int
 ) -> tuple[DataLoader, DataLoader]:
-
     if dataset == "cifar":
         return get_cifar_dataloaders(data_dir, batch_size, num_workers)
-    
 
-def get_cifar_dataloaders(data_dir: str, batch_size: int, num_workers: int) -> tuple[DataLoader, DataLoader]:
 
+def get_cifar_dataloaders(
+    data_dir: str, batch_size: int, num_workers: int
+) -> tuple[DataLoader, DataLoader]:
     train_transform = transforms.Compose(
         [
             transforms.RandomCrop(32, padding=4),
@@ -49,7 +49,7 @@ def get_cifar_dataloaders(data_dir: str, batch_size: int, num_workers: int) -> t
     train_sampler = DistributedSampler(train_loader.dataset, shuffle=False)
     test_sampler = DistributedSampler(train_loader.dataset, shuffle=False)
 
-    train_loader = DataLoader(  
+    train_loader = DataLoader(
         train_loader.dataset,
         batch_size=batch_size,
         sampler=train_sampler,
@@ -58,7 +58,7 @@ def get_cifar_dataloaders(data_dir: str, batch_size: int, num_workers: int) -> t
         pin_memory=False,
     )
 
-    test_loader = DataLoader(  
+    test_loader = DataLoader(
         train_loader.dataset,
         batch_size=batch_size,
         sampler=test_sampler,

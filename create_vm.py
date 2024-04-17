@@ -1,8 +1,8 @@
+from typing import Dict, List
+
 import fire
 from google.cloud import compute_v1
-from typing import List, Dict
 from tqdm import tqdm
-
 
 """
 Instantiate and run a single GCP instance with a GPU attached
@@ -121,13 +121,11 @@ def create_all_vm(
     disk_source_image: str,
     disk_size: int,
 ) -> None:
-
     for zone_dict in tqdm(
         available_zones,
         total=len(available_zones),
         desc="instantiate VM in first available zones",
     ):
-
         instance_name = f"{vm_name}"
         region = zone_dict["region"]
         zone = zone_dict["zone"]

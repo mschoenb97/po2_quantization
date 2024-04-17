@@ -1,15 +1,16 @@
-import torch
+import collections
 import os
 import pickle
-import collections
+
+import torch
+from quantizers import (
+    LinearPowerOfTwoPlusQuantizer,
+    LinearPowerOfTwoQuantizer,
+    PowerOfTwoPlusQuantizer,
+    PowerOfTwoQuantizer,
+)
 
 from models import resnet20, resnet32, resnet44, resnet56
-from quantizers import (
-    PowerOfTwoQuantizer,
-    PowerOfTwoPlusQuantizer,
-    LinearPowerOfTwoQuantizer,
-    LinearPowerOfTwoPlusQuantizer,
-)
 
 
 def save_dict(state_dict, dir):
@@ -56,9 +57,9 @@ def load_dict(dir, device, bits_to_try, test=False):
                 state_dict[f"{base_model_name}_{quantizer_name}_{bits}"]["model"] = (
                     model_fn(quantize_fn=quantizer, bits=bits)
                 )
-                state_dict[f"{base_model_name}_{quantizer_name}_{bits}"][
-                    "fp_model"
-                ] = base_model_name
+                state_dict[f"{base_model_name}_{quantizer_name}_{bits}"]["fp_model"] = (
+                    base_model_name
+                )
                 state_dict[f"{base_model_name}_{quantizer_name}_{bits}"][
                     "is_quantized"
                 ] = True

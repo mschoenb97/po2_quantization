@@ -1,7 +1,8 @@
+from typing import Any, Callable, List, Optional, Tuple
+
 import torch
 import torch.nn as nn
 from torch import Tensor
-from typing import Any, Callable, List, Optional, Tuple
 
 
 class QuantizedConv2d(nn.Conv2d):
@@ -112,7 +113,6 @@ class BasicBlock(nn.Module):
         return out
 
     def get_quantization_error(self):
-
         quantization_error = 0.0
         numel = 0
 
@@ -126,7 +126,6 @@ class BasicBlock(nn.Module):
 
 
 class ResNet(nn.Module):
-
     def __init__(
         self,
         block: BasicBlock,
@@ -192,7 +191,6 @@ class ResNet(nn.Module):
         quantize_fn: Optional[Callable] = None,
         bits: int = 7,
     ) -> nn.Sequential:
-
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = nn.Sequential(
@@ -248,7 +246,6 @@ class ResNet(nn.Module):
         return self.fc(x)  # 64x10
 
     def _get_quantization_error_for_layer(self, layer: nn.Module) -> Tuple[float, int]:
-
         quantization_error = 0.0
         numel = 0
 
@@ -261,7 +258,6 @@ class ResNet(nn.Module):
         return quantization_error, numel
 
     def get_quantization_error(self):
-
         quantization_error = 0.0
         numel = 0
 
@@ -281,7 +277,7 @@ def ResNet20(
     num_classes: int = 10,
     quantize_fn: Optional[Callable] = None,
     bits: int = 4,
-    **kwargs: Any
+    **kwargs: Any,
 ) -> ResNet:
     return ResNet(
         block=BasicBlock,
@@ -290,7 +286,7 @@ def ResNet20(
         num_classes=num_classes,
         quantize_fn=quantize_fn,
         bits=bits,
-        **kwargs
+        **kwargs,
     )
 
 
@@ -300,7 +296,7 @@ def ResNet32(
     num_classes: int = 10,
     quantize_fn: Optional[Callable] = None,
     bits: int = 7,
-    **kwargs: Any
+    **kwargs: Any,
 ) -> ResNet:
     return ResNet(
         block=BasicBlock,
@@ -309,7 +305,7 @@ def ResNet32(
         num_classes=num_classes,
         quantize_fn=quantize_fn,
         bits=bits,
-        **kwargs
+        **kwargs,
     )
 
 
@@ -319,7 +315,7 @@ def ResNet44(
     num_classes: int = 10,
     quantize_fn: Optional[Callable] = None,
     bits: int = 7,
-    **kwargs: Any
+    **kwargs: Any,
 ) -> ResNet:
     return ResNet(
         block=BasicBlock,
@@ -328,7 +324,7 @@ def ResNet44(
         num_classes=num_classes,
         quantize_fn=quantize_fn,
         bits=bits,
-        **kwargs
+        **kwargs,
     )
 
 
@@ -338,7 +334,7 @@ def ResNet56(
     num_classes: int = 10,
     quantize_fn: Optional[Callable] = None,
     bits: int = 7,
-    **kwargs: Any
+    **kwargs: Any,
 ) -> ResNet:
     return ResNet(
         block=BasicBlock,
@@ -347,5 +343,5 @@ def ResNet56(
         num_classes=num_classes,
         quantize_fn=quantize_fn,
         bits=bits,
-        **kwargs
+        **kwargs,
     )

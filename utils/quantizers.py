@@ -1,5 +1,6 @@
 import torch
 
+
 def quantize_per_filter(
     x: torch.Tensor, delta: torch.Tensor, bits: int
 ) -> torch.Tensor:
@@ -50,11 +51,10 @@ class PowerOfTwoPlusQuantizer(torch.autograd.Function):
     def backward(ctx, grad_output):
         return grad_output, None, None
 
-class LinearPowerOfTwoQuantizer(torch.autograd.Function):
 
+class LinearPowerOfTwoQuantizer(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input: torch.Tensor, bits: int = 4, num_iters: int = 10):
-
         max = torch.max(
             torch.max(torch.max(input, dim=3).values, dim=2).values, dim=0
         ).values  # find the max for each filter (dim = 1)
@@ -68,7 +68,6 @@ class LinearPowerOfTwoQuantizer(torch.autograd.Function):
         assert q.shape == input.shape
 
         for _ in range(num_iters):
-
             # unconstrained optimal delta minimizing MSQE
             qTw = torch.sum(q * input, dim=[0, 2, 3])
             qTq = torch.sum(q * q, dim=[0, 2, 3])
@@ -93,10 +92,8 @@ class LinearPowerOfTwoQuantizer(torch.autograd.Function):
 
 
 class LinearPowerOfTwoPlusQuantizer(torch.autograd.Function):
-
     @staticmethod
     def forward(ctx, input: torch.Tensor, bits: int = 4, num_iters: int = 10):
-
         max = torch.max(
             torch.max(torch.max(input, dim=3).values, dim=2).values, dim=0
         ).values  # find the max for each filter (dim = 1)
@@ -110,7 +107,6 @@ class LinearPowerOfTwoPlusQuantizer(torch.autograd.Function):
         assert q.shape == input.shape
 
         for _ in range(num_iters):
-
             # unconstrained optimal delta minimizing MSQE
             qTw = torch.sum(q * input, dim=[0, 2, 3])
             qTq = torch.sum(q * q, dim=[0, 2, 3])

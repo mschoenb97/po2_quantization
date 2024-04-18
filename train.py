@@ -95,6 +95,8 @@ def run_train_loop(
 
         total_quantization_error, numel = model.module.get_quantization_error()
         quantization_error = total_quantization_error / numel
+        if type(quantization_error) == torch.Tensor:
+            quantization_error = quantization_error.item()
 
         if int(os.environ["LOCAL_RANK"]) == 0:
             print(
@@ -103,7 +105,6 @@ def run_train_loop(
         train_results.append((epoch, train_loss, train_acc, quantization_error))
 
     torch.save(model.state_dict(), model_path)
-
     return train_results
 
 
@@ -191,10 +192,11 @@ def main(
     ], "invalid quantizer type"
     assert bits in [2, 3, 4], "invalid number of bits"
 
-    config = (
+    # ie. resnet20_cifar_full_precision.pth, resnet44_imagenet_po2_2.pth
+    train_config = (
         f"{model_type}_{dataset}_full_precision"
         if quantizer_type == "none"
-        else f"{model_type}_{dataset}_{quantizer_type}_{bits}bits"
+        else f"{model_type}_{dataset}_{quantizer_type}_{bits}"
     )
     full_precision_model_path = (
         f"{results_dir}/{model_type}_{dataset}_full_precision.pth"
@@ -222,7 +224,11 @@ def main(
     torch.backends.cudnn.benchmark = False
 
     train_loader, _ = get_dataloaders(
-        dataset=dataset, data_dir=data_dir, batch_size=batch_size, num_workers=2
+        dataset=dataset,
+        data_dir=data_dir,
+        batch_size=batch_size,
+        num_workers=2,
+        distributed=True,
     )
 
     train_results = train_model(
@@ -231,12 +237,12 @@ def main(
         model_type=model_type,
         num_epochs=num_epochs,
         train_loader=train_loader,
-        model_path=f"{results_dir}/{config}.pth",
+        model_path=f"{results_dir}/{train_config}.pth",
         full_precision_model_path=full_precision_model_path,
     )
 
     if int(os.environ["LOCAL_RANK"]) == 0:
-        with open(f"{results_dir}/{config}.csv", mode="w") as f:
+        with open(f"{results_dir}/{train_config}.csv", mode="w") as f:
             writer = csv.writer(f)
             writer.writerow(["epoch", "train_loss", "train_acc", "quantization_error"])
             writer.writerows(train_results)

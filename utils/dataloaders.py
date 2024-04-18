@@ -5,14 +5,14 @@ from torch.utils.data.distributed import DistributedSampler
 
 
 def get_dataloaders(
-    dataset: str, data_dir: str, batch_size: int, num_workers: int
+    dataset: str, data_dir: str, batch_size: int, num_workers: int, distributed: bool = False
 ) -> tuple[DataLoader, DataLoader]:
     if dataset == "cifar":
-        return get_cifar_dataloaders(data_dir, batch_size, num_workers)
+        return get_cifar_dataloaders(data_dir, batch_size, num_workers, distributed)
 
 
 def get_cifar_dataloaders(
-    data_dir: str, batch_size: int, num_workers: int
+    data_dir: str, batch_size: int, num_workers: int, distributed: bool = False
 ) -> tuple[DataLoader, DataLoader]:
     train_transform = transforms.Compose(
         [
@@ -44,6 +44,9 @@ def get_cifar_dataloaders(
     test_loader = DataLoader(
         test_data, batch_size=batch_size, shuffle=False, num_workers=num_workers
     )
+
+    if not distributed:
+        return train_loader, test_loader
 
     # create a DistributedSampler to handle data parallelism
     train_sampler = DistributedSampler(train_loader.dataset, shuffle=False)

@@ -108,10 +108,6 @@ def run_train_loop(
             else:
                 scheduler_multistep.step()
 
-        lr = optimizer.param_groups[0]["lr"]
-        if int(os.environ["LOCAL_RANK"]) == 0:
-            print(f"Epoch: {epoch}, lr: {lr:.6f}")
-
         # convert scalar values to tensors
         total_loss_tensor = torch.tensor(total_loss, device=device)
         total_correct_tensor = torch.tensor(total_correct, device=device)

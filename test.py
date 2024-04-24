@@ -1,4 +1,3 @@
-import csv
 import os
 import random
 from copy import deepcopy
@@ -38,6 +37,7 @@ def test_model(model: nn.Module, test_loader: DataLoader, device: str) -> None:
     model.eval()
 
     with torch.no_grad():
+        test_loader.sampler.set_epoch(0)
         for images, labels in test_loader:
             images, labels = images.to(device), labels.to(device)
             outputs = model(images)
@@ -53,7 +53,7 @@ def test_model(model: nn.Module, test_loader: DataLoader, device: str) -> None:
 
 
 def load_model(
-    model_type: str, quantize_fn: Callable, bits: int, model_path: str
+    model_type: str, quantize_fn: Callable, bits: int, model_path: str, device: str
 ) -> nn.Module:
     if model_type == "resnet20":
         model = ResNet20(quantize_fn=quantize_fn, bits=bits)
@@ -64,15 +64,10 @@ def load_model(
     elif model_type == "resnet56":
         model = ResNet56(quantize_fn=quantize_fn, bits=bits)
 
-    local_rank = int(os.environ["LOCAL_RANK"])
-    torch.manual_seed(local_rank)  # set different seed for each process
-    device = torch.device("cuda", local_rank)
     model = model.to(device)
-    model = DistributedDataParallel(
-        model, device_ids=[local_rank], output_device=local_rank
-    )
-
-    return model.load_state_dict(torch.load(model_path))
+    model = DistributedDataParallel(model, device_ids=[device], output_device=device)
+    model.load_state_dict(torch.load(model_path, map_location=device))
+    return model
 
 
 def main(
@@ -115,7 +110,7 @@ def main(
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    device = torch.device("cuda", 0)
+    device = torch.device("cuda", local_rank)
 
     _, test_loader = get_dataloaders(
         dataset=dataset,
@@ -124,7 +119,6 @@ def main(
         num_workers=2,
         distributed=True,
     )
-    dist.barrier()
 
     full_precision = f"{model_type}_{dataset}_full_precision"
     model = load_model(
@@ -132,13 +126,14 @@ def main(
         quantize_fn=None,
         bits=4,
         model_path=f"{results_dir}/{full_precision}.pth",
+        device=device,
     )
     test_results = []
-    dist.barrier()
 
     # Full Precision Training
     test_acc = test_model(model=model, test_loader=test_loader, device=device)
-    print(f"full_precision = {100 * test_acc:.5f}%")
+    if local_rank == 0:
+        print(f"full_precision = {100 * test_acc:.2f}%")
     test_results.append(("full_precision", test_acc))
 
     # Post Training Quantization
@@ -149,27 +144,30 @@ def main(
             test_acc = test_model(
                 model=model_copy, test_loader=test_loader, device=device
             )
-            print(f"ptq_{quantizer_type}_{bits} = {100 * test_acc:.5f}%")
-            test_results.append((f"ptq_{quantizer_type}_{bits}", test_acc))
+            if local_rank == 0:
+                print(f"ptq_{quantizer_type}_{bits} = {100 * test_acc:.2f}%")
+                test_results.append((f"ptq_{quantizer_type}_{bits}", test_acc))
 
     # Quantization Aware Training
-    for quantizer_type, quantizer in quantizer_dict.items():
-        for bits in bits_to_try:
-            train_config = f"{model_type}_{dataset}_{quantizer_type}_{bits}"
-            model = load_model(
-                model_type=model_type,
-                quantize_fn=quantizer,
-                bits=bits,
-                model_path=f"{results_dir}/{train_config}.pth",
-            )
-            test_acc = test_model(model=model, test_loader=test_loader, device=device)
-            print(f"qat_{quantizer_type}_{bits} = {100 * test_acc:.5f}%")
-            test_results.append((f"qat_{quantizer_type}_{bits}", test_acc))
+    # for quantizer_type, quantizer in quantizer_dict.items():
+    #     for bits in bits_to_try:
+    #         train_config = f"{model_type}_{dataset}_{quantizer_type}_{bits}"
+    #         model = load_model(
+    #             model_type=model_type,
+    #             quantize_fn=quantizer,
+    #             bits=bits,
+    #             model_path=f"{results_dir}/{train_config}.pth",
+    #         )
+    #         test_acc = test_model(model=model, test_loader=test_loader, device=device)
+    #         if local_rank == 0:
+    #             print(f"qat_{quantizer_type}_{bits} = {100 * test_acc:.2f}%")
+    #         test_results.append((f"qat_{quantizer_type}_{bits}", test_acc))
 
-    with open(f"{results_dir}/{model_type}_{dataset}_results.csv", mode="w") as f:
-        writer = csv.writer(f)
-        writer.writerow(["model", "test_acc"])
-        writer.writerows(test_results)
+    # if local_rank == 0:
+    #     with open(f"{results_dir}/{model_type}_{dataset}_results.csv", mode="w") as f:
+    #         writer = csv.writer(f)
+    #         writer.writerow(["model", "test_acc"])
+    #         writer.writerows(test_results)
 
 
 if __name__ == "__main__":

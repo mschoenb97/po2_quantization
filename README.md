@@ -34,5 +34,5 @@ $ ./train_launch.sh resnet56 cifar 164 128 0.1
 
 ```bash
 # get test results for full precision, PTQ and QAT
-$ python test.py --model_type=resnet20 --dataset=cifar --dist=False
+$ torchrun --standalone --nnodes=1 --nproc-per-node=4 test.py --model_type=resnet20 --dataset=cifar
 ```

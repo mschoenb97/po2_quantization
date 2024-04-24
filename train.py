@@ -284,7 +284,7 @@ def main(
         full_precision_model_path=full_precision_model_path,
     )
 
-    if int(os.environ["LOCAL_RANK"]) == 0:
+    if local_rank == 0:
         with open(f"{results_dir}/{train_config}.csv", mode="w") as f:
             writer = csv.writer(f)
             writer.writerow(

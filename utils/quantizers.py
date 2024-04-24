@@ -84,7 +84,8 @@ class LinearPowerOfTwoQuantizer(torch.autograd.Function):
             )  # quantize input with new delta
             assert q.shape == input.shape
 
-        return q
+        # ensure we convert back to quantized fp representation
+        return q * delta.view(-1, 1, 1)
 
     @staticmethod
     def backward(ctx, grad_output):
@@ -123,7 +124,8 @@ class LinearPowerOfTwoPlusQuantizer(torch.autograd.Function):
             )  # quantize input with new delta
             assert q.shape == input.shape
 
-        return q
+        # ensure we convert back to quantized fp representation
+        return q * delta.view(-1, 1, 1)
 
     @staticmethod
     def backward(ctx, grad_output):

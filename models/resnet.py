@@ -60,6 +60,7 @@ class BasicBlock(nn.Module):
         downsample: Optional[nn.Module] = None,
         quantize_fn: Optional[Callable] = None,
         bits: int = 7,
+        dist: bool = True,
     ) -> None:
         super().__init__()
 
@@ -76,7 +77,7 @@ class BasicBlock(nn.Module):
             quantize_fn=quantize_fn,
             bits=bits,
         )
-        self.bn1 = nn.BatchNorm2d(planes)
+        self.bn1 = nn.SyncBatchNorm(planes) if dist else nn.BatchNorm2d(planes)
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = QuantizedConv2d(
             planes,
@@ -90,7 +91,7 @@ class BasicBlock(nn.Module):
             quantize_fn=quantize_fn,
             bits=bits,
         )
-        self.bn2 = nn.BatchNorm2d(planes)
+        self.bn2 = nn.SyncBatchNorm(planes) if dist else nn.BatchNorm2d(planes)
         self.downsample = downsample
         self.stride = stride
 
@@ -136,6 +137,7 @@ class ResNet(nn.Module):
         width_per_group: int = 64,
         quantize_fn: Optional[Callable] = None,
         bits: int = 7,
+        dist: bool = True,
     ) -> None:
         super().__init__()
 
@@ -145,7 +147,9 @@ class ResNet(nn.Module):
         self.conv1 = nn.Conv2d(
             3, self.inplanes, kernel_size=3, stride=1, padding=1, bias=False
         )
-        self.bn1 = nn.BatchNorm2d(self.inplanes)
+        self.bn1 = (
+            nn.SyncBatchNorm(self.inplanes) if dist else nn.BatchNorm2d(self.inplanes)
+        )
         self.relu = nn.ReLU(inplace=True)
 
         self.layer1 = self._make_layer(
@@ -155,6 +159,7 @@ class ResNet(nn.Module):
             stride=1,
             quantize_fn=quantize_fn,
             bits=bits,
+            dist=dist,
         )
         self.layer2 = self._make_layer(
             block,
@@ -163,6 +168,7 @@ class ResNet(nn.Module):
             stride=2,
             quantize_fn=quantize_fn,
             bits=bits,
+            dist=dist,
         )  # stride 2 creates subsampling
         self.layer3 = self._make_layer(
             block,
@@ -171,6 +177,7 @@ class ResNet(nn.Module):
             stride=2,
             quantize_fn=quantize_fn,
             bits=bits,
+            dist=dist,
         )
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(64 * block.expansion, num_classes)
@@ -190,9 +197,11 @@ class ResNet(nn.Module):
         stride: int = 1,
         quantize_fn: Optional[Callable] = None,
         bits: int = 7,
+        dist: bool = True,
     ) -> nn.Sequential:
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
+            batch_norm = nn.SyncBatchNorm if dist else nn.BatchNorm2d
             downsample = nn.Sequential(
                 QuantizedConv2d(
                     self.inplanes,
@@ -204,7 +213,7 @@ class ResNet(nn.Module):
                     quantize_fn=quantize_fn,
                     bits=bits,
                 ),
-                nn.BatchNorm2d(planes * block.expansion),
+                batch_norm(planes * block.expansion),
             )
 
         layers = []
@@ -216,6 +225,7 @@ class ResNet(nn.Module):
                 downsample,
                 quantize_fn=quantize_fn,
                 bits=bits,
+                dist=dist,
             )
         )
         self.inplanes = planes * block.expansion
@@ -227,6 +237,7 @@ class ResNet(nn.Module):
                     planes,
                     quantize_fn=quantize_fn,
                     bits=bits,
+                    dist=dist,
                 )
             )
 
@@ -277,6 +288,7 @@ def ResNet20(
     num_classes: int = 10,
     quantize_fn: Optional[Callable] = None,
     bits: int = 4,
+    dist: bool = True,
     **kwargs: Any,
 ) -> ResNet:
     return ResNet(
@@ -286,6 +298,7 @@ def ResNet20(
         num_classes=num_classes,
         quantize_fn=quantize_fn,
         bits=bits,
+        dist=dist,
         **kwargs,
     )
 
@@ -295,7 +308,8 @@ def ResNet32(
     n: int = 5,
     num_classes: int = 10,
     quantize_fn: Optional[Callable] = None,
-    bits: int = 7,
+    bits: int = 4,
+    dist: bool = True,
     **kwargs: Any,
 ) -> ResNet:
     return ResNet(
@@ -305,6 +319,7 @@ def ResNet32(
         num_classes=num_classes,
         quantize_fn=quantize_fn,
         bits=bits,
+        dist=dist,
         **kwargs,
     )
 
@@ -314,7 +329,8 @@ def ResNet44(
     n: int = 7,
     num_classes: int = 10,
     quantize_fn: Optional[Callable] = None,
-    bits: int = 7,
+    bits: int = 4,
+    dist: bool = True,
     **kwargs: Any,
 ) -> ResNet:
     return ResNet(
@@ -324,6 +340,7 @@ def ResNet44(
         num_classes=num_classes,
         quantize_fn=quantize_fn,
         bits=bits,
+        dist=dist,
         **kwargs,
     )
 
@@ -333,7 +350,8 @@ def ResNet56(
     n: int = 9,
     num_classes: int = 10,
     quantize_fn: Optional[Callable] = None,
-    bits: int = 7,
+    bits: int = 4,
+    dist: bool = True,
     **kwargs: Any,
 ) -> ResNet:
     return ResNet(
@@ -343,5 +361,6 @@ def ResNet56(
         num_classes=num_classes,
         quantize_fn=quantize_fn,
         bits=bits,
+        dist=dist,
         **kwargs,
     )

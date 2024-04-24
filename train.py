@@ -10,7 +10,7 @@ import torch.distributed as dist
 import torch.nn as nn
 import torch.optim as optim
 from torch.nn.parallel import DistributedDataParallel
-from torch.optim.lr_scheduler import CosineAnnealingLR, LambdaLR
+from torch.optim.lr_scheduler import LambdaLR, MultiStepLR
 from torch.utils.data import DataLoader
 
 from models.resnet import ResNet20, ResNet32, ResNet44, ResNet56
@@ -23,33 +23,61 @@ from utils.quantizers import (
 )
 
 
+def test_model(model: nn.Module, test_loader: DataLoader, device: str) -> None:
+    correct, total = 0, 0
+    model.eval()
+
+    with torch.no_grad():
+        for images, labels in test_loader:
+            images, labels = images.to(device), labels.to(device)
+            outputs = model(images)
+            _, predicted = torch.max(outputs.data, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+
+    test_acc = correct / total
+    test_acc_tensor = torch.tensor(test_acc, device=device)
+    dist.all_reduce(test_acc_tensor, op=dist.ReduceOp.SUM)
+    test_acc = test_acc_tensor.item() / dist.get_world_size()
+    return test_acc
+
+
 def run_train_loop(
+    model_type: str,
     model: nn.Module,
     device: str,
     train_loader: DataLoader,
+    test_loader: DataLoader,
     model_path: str,
-    num_epochs: int = 164,
-    lr: float = 0.1,
+    num_epochs: int,
+    lr: float,
     momentum: float = 0.9,
-    weight_decay: float = 0.0001,
+    weight_decay: float = 1e-4,
     percent_warmup_epochs: float = 0.1,
 ) -> List[Tuple[int, float, float, float]]:
-    optimizer = optim.SGD(
-        model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay
-    )
-    criterion = nn.CrossEntropyLoss()
+    # scale learning rate to accomodate for larger effective batch_size
+    lr *= dist.get_world_size()
     warmup_epochs = int(percent_warmup_epochs * num_epochs)
-    warmup_steps = warmup_epochs * len(train_loader)
-    lambda1 = lambda step: step / warmup_steps if step < warmup_steps else 1
-    scheduler_warmup = LambdaLR(optimizer, lr_lambda=lambda1)
-    scheduler_cosine = CosineAnnealingLR(
-        optimizer, T_max=num_epochs - warmup_epochs, eta_min=0
-    )
+
+    if "resnet" in model_type:
+        optimizer = optim.SGD(
+            model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay
+        )
+        criterion = nn.CrossEntropyLoss()
+
+        def lr_lambda(epoch):
+            return (epoch + 1) / (warmup_epochs + 1)
+
+        scheduler_warmup = LambdaLR(optimizer, lr_lambda=lr_lambda)
+
+        # divide lr at epoch 82 and 123 (391 iterations per epoch)
+        scheduler_multistep = MultiStepLR(
+            optimizer, milestones=[82 - warmup_epochs, 123 - warmup_epochs], gamma=0.1
+        )
 
     train_results = []
     dist.barrier()
 
-    # terminate at 64k iterations or 164 epochs: each epoch has 391 iterations
     for epoch in range(num_epochs):
         # set the epoch ID for the DistributedSampler
         train_loader.sampler.set_epoch(epoch)
@@ -73,10 +101,16 @@ def run_train_loop(
 
             loss.backward()
             optimizer.step()
+
+        if "resnet" in model_type:
             if epoch < warmup_epochs:
                 scheduler_warmup.step()
             else:
-                scheduler_cosine.step()
+                scheduler_multistep.step()
+
+        lr = optimizer.param_groups[0]["lr"]
+        if int(os.environ["LOCAL_RANK"]) == 0:
+            print(f"Epoch: {epoch}, lr: {lr:.6f}")
 
         # convert scalar values to tensors
         total_loss_tensor = torch.tensor(total_loss, device=device)
@@ -92,6 +126,7 @@ def run_train_loop(
             len(train_loader) * dist.get_world_size()
         )
         train_acc = total_correct_tensor.item() / total_samples_tensor.item()
+        test_acc = test_model(model, test_loader, device)
 
         total_quantization_error, numel = model.module.get_quantization_error()
         quantization_error = total_quantization_error / numel
@@ -100,9 +135,11 @@ def run_train_loop(
 
         if int(os.environ["LOCAL_RANK"]) == 0:
             print(
-                f"epoch: {epoch}, train_loss: {train_loss:.4f}, train_acc: {train_acc:.4f}, quantization_error: {quantization_error:.4f}"
+                f"epoch: {epoch}, train_loss: {train_loss:.4f}, train_acc: {train_acc:.4f}, test_acc: {test_acc:.4f}, quantization_error: {quantization_error:.4f}"
             )
-        train_results.append((epoch, train_loss, train_acc, quantization_error))
+        train_results.append(
+            (epoch, train_loss, train_acc, test_acc, quantization_error)
+        )
 
     torch.save(model.state_dict(), model_path)
     return train_results
@@ -113,7 +150,9 @@ def train_model(
     quantizer: Optional[Callable[..., None]],
     bits: int,
     num_epochs: int,
+    lr: float,
     train_loader: DataLoader,
+    test_loader: DataLoader,
     model_path: str,
     full_precision_model_path: str,
 ) -> List[Tuple[int, float, float, float]]:
@@ -145,11 +184,14 @@ def train_model(
 
     # perform full precision training or QAT
     train_res = run_train_loop(
+        model_type=model_type,
         model=model,
         device=device,
         train_loader=train_loader,
-        num_epochs=num_epochs,
+        test_loader=test_loader,
         model_path=model_path,
+        num_epochs=num_epochs,
+        lr=lr,
     )
     return train_res
 
@@ -159,8 +201,9 @@ def main(
     dataset: str,
     quantizer_type: str,
     bits: int,
-    num_epochs: int = 164,
-    batch_size: int = 128,
+    num_epochs: int,
+    batch_size: int,
+    lr: float,
     seed: int = 8,
     data_dir: str = "./data",
     results_dir: str = "./results",
@@ -223,7 +266,7 @@ def main(
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-    train_loader, _ = get_dataloaders(
+    train_loader, test_loader = get_dataloaders(
         dataset=dataset,
         data_dir=data_dir,
         batch_size=batch_size,
@@ -231,12 +274,16 @@ def main(
         distributed=True,
     )
 
+    dist.barrier()
+
     train_results = train_model(
         quantizer=quantizer,
         bits=bits,
         model_type=model_type,
         num_epochs=num_epochs,
+        lr=lr,
         train_loader=train_loader,
+        test_loader=test_loader,
         model_path=f"{results_dir}/{train_config}.pth",
         full_precision_model_path=full_precision_model_path,
     )
@@ -244,7 +291,9 @@ def main(
     if int(os.environ["LOCAL_RANK"]) == 0:
         with open(f"{results_dir}/{train_config}.csv", mode="w") as f:
             writer = csv.writer(f)
-            writer.writerow(["epoch", "train_loss", "train_acc", "quantization_error"])
+            writer.writerow(
+                ["epoch", "train_loss", "train_acc", "test_acc", "quantization_error"]
+            )
             writer.writerows(train_results)
 
     if local_rank == 0:

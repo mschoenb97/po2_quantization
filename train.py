@@ -35,10 +35,11 @@ def test_model(model: nn.Module, test_loader: DataLoader, device: str) -> None:
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
 
-    test_acc = correct / total
-    test_acc_tensor = torch.tensor(test_acc, device=device)
-    dist.all_reduce(test_acc_tensor, op=dist.ReduceOp.SUM)
-    test_acc = test_acc_tensor.item() / dist.get_world_size()
+    correct_tensor = torch.tensor(correct, device=device)
+    total_tensor = torch.tensor(total, device=device)
+    dist.all_reduce(correct_tensor, op=dist.ReduceOp.SUM)
+    dist.all_reduce(total_tensor, op=dist.ReduceOp.SUM)
+    test_acc = correct_tensor.item() / total_tensor.item()
     return test_acc
 
 
@@ -92,7 +93,7 @@ def run_train_loop(
 
             outputs = model(inputs)
             loss = criterion(outputs, labels)
-            total_loss += loss.item()
+            total_loss += loss.item() * inputs.size(0)
 
             with torch.no_grad():
                 _, predicted = torch.max(outputs, 1)
@@ -118,9 +119,7 @@ def run_train_loop(
         dist.all_reduce(total_correct_tensor, op=dist.ReduceOp.SUM)
         dist.all_reduce(total_samples_tensor, op=dist.ReduceOp.SUM)
 
-        train_loss = total_loss_tensor.item() / (
-            len(train_loader) * dist.get_world_size()
-        )
+        train_loss = total_loss_tensor.item() / total_samples_tensor.item()
         train_acc = total_correct_tensor.item() / total_samples_tensor.item()
         test_acc = test_model(model, test_loader, device)
 

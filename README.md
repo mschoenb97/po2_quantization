@@ -9,6 +9,7 @@ $ python3 create_vm.py --project_id="high-performance-ml" --vm_name="sleds" --di
 ### Install dependencies
 
 ```bash
+$ conda create --name venv --file requirements.txt
 $ pip install -r requirements.txt
 ```
 ### Test a single training

@@ -9,14 +9,14 @@ def get_dataloaders(
     data_dir: str,
     batch_size: int,
     num_workers: int,
-    distributed: bool = False,
+    distributed: bool,
 ) -> tuple[DataLoader, DataLoader]:
     if dataset == "cifar":
         return get_cifar_dataloaders(data_dir, batch_size, num_workers, distributed)
 
 
 def get_cifar_dataloaders(
-    data_dir: str, batch_size: int, num_workers: int, distributed: bool = False
+    data_dir: str, batch_size: int, num_workers: int, distributed: bool
 ) -> tuple[DataLoader, DataLoader]:
     train_transform = transforms.Compose(
         [
@@ -35,11 +35,11 @@ def get_cifar_dataloaders(
     )
 
     train_data = torchvision.datasets.CIFAR10(
-        root=data_dir, train=True, download=True, transform=train_transform
+        root=data_dir, train=True, download=False, transform=train_transform
     )
 
     test_data = torchvision.datasets.CIFAR10(
-        root=data_dir, train=False, download=True, transform=test_transform
+        root=data_dir, train=False, download=False, transform=test_transform
     )
 
     train_loader = DataLoader(
@@ -49,29 +49,25 @@ def get_cifar_dataloaders(
         test_data, batch_size=batch_size, shuffle=False, num_workers=num_workers
     )
 
-    if not distributed:
-        return train_loader, test_loader
+    if distributed:
+        # create a DistributedSampler to handle data parallelism
+        train_sampler = DistributedSampler(train_loader.dataset, shuffle=True)
+        test_sampler = DistributedSampler(test_loader.dataset, shuffle=False)
 
-    # create a DistributedSampler to handle data parallelism
-    train_sampler = DistributedSampler(train_loader.dataset, shuffle=False)
-    test_sampler = DistributedSampler(test_loader.dataset, shuffle=False)
+        train_loader = DataLoader(
+            train_loader.dataset,
+            batch_size=batch_size,
+            sampler=train_sampler,
+            num_workers=num_workers,
+            pin_memory=False,
+        )
 
-    train_loader = DataLoader(
-        train_loader.dataset,
-        batch_size=batch_size,
-        sampler=train_sampler,
-        shuffle=False,
-        num_workers=0,
-        pin_memory=False,
-    )
-
-    test_loader = DataLoader(
-        train_loader.dataset,
-        batch_size=batch_size,
-        sampler=test_sampler,
-        shuffle=False,
-        num_workers=0,
-        pin_memory=False,
-    )
+        test_loader = DataLoader(
+            train_loader.dataset,
+            batch_size=batch_size,
+            sampler=test_sampler,
+            num_workers=num_workers,
+            pin_memory=False,
+        )
 
     return train_loader, test_loader

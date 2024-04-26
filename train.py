@@ -12,6 +12,7 @@ import torch.optim as optim
 from torch.nn.parallel import DistributedDataParallel
 from torch.optim.lr_scheduler import LambdaLR, MultiStepLR
 from torch.utils.data import DataLoader
+from pathlib import Path
 
 from models.resnet import ResNet20, ResNet32, ResNet44, ResNet56
 from utils.dataloaders import get_dataloaders
@@ -21,26 +22,6 @@ from utils.quantizers import (
     PowerOfTwoPlusQuantizer,
     PowerOfTwoQuantizer,
 )
-
-
-def test_model(model: nn.Module, test_loader: DataLoader, device: str) -> None:
-    correct, total = 0, 0
-    model.eval()
-
-    with torch.no_grad():
-        for images, labels in test_loader:
-            images, labels = images.to(device), labels.to(device)
-            outputs = model(images)
-            _, predicted = torch.max(outputs.data, 1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
-
-    correct_tensor = torch.tensor(correct, device=device)
-    total_tensor = torch.tensor(total, device=device)
-    dist.all_reduce(correct_tensor, op=dist.ReduceOp.SUM)
-    dist.all_reduce(total_tensor, op=dist.ReduceOp.SUM)
-    test_acc = correct_tensor.item() / total_tensor.item()
-    return test_acc
 
 
 def run_train_loop(
@@ -82,9 +63,9 @@ def run_train_loop(
     for epoch in range(num_epochs):
         # set the epoch ID for the DistributedSampler
         train_loader.sampler.set_epoch(epoch)
-        total_loss = 0.0
-        total_correct = 0
-        total_samples = 0
+        total_loss = torch.tensor(0.0, dtype=torch.float32, device=device)
+        total_correct = torch.tensor(0, dtype=torch.int64, device=device)
+        total_samples = torch.tensor(0, dtype=torch.int64, device=device)
         model.train()
 
         for images, labels in train_loader:
@@ -109,19 +90,13 @@ def run_train_loop(
             else:
                 scheduler_multistep.step()
 
-        # convert scalar values to tensors
-        total_loss_tensor = torch.tensor(total_loss, device=device)
-        total_correct_tensor = torch.tensor(total_correct, device=device)
-        total_samples_tensor = torch.tensor(total_samples, device=device)
-
         # sum values across all processes
-        dist.all_reduce(total_loss_tensor, op=dist.ReduceOp.SUM)
-        dist.all_reduce(total_correct_tensor, op=dist.ReduceOp.SUM)
-        dist.all_reduce(total_samples_tensor, op=dist.ReduceOp.SUM)
+        dist.all_reduce(total_loss, op=dist.ReduceOp.SUM)
+        dist.all_reduce(total_correct, op=dist.ReduceOp.SUM)
+        dist.all_reduce(total_samples, op=dist.ReduceOp.SUM)
 
-        train_loss = total_loss_tensor.item() / total_samples_tensor.item()
-        train_acc = total_correct_tensor.item() / total_samples_tensor.item()
-        test_acc = test_model(model, test_loader, device)
+        train_loss = total_loss.item() / total_samples.item()
+        train_acc = total_correct.item() / total_samples.item()
 
         total_quantization_error, numel = model.module.get_quantization_error()
         quantization_error = total_quantization_error / numel
@@ -130,10 +105,10 @@ def run_train_loop(
 
         if int(os.environ["LOCAL_RANK"]) == 0:
             print(
-                f"epoch: {epoch}, train_loss: {train_loss:.4f}, train_acc: {train_acc:.4f}, test_acc: {test_acc:.4f}, quantization_error: {quantization_error:.4f}"
+                f"epoch: {epoch}, train_loss: {train_loss:.4f}, train_acc: {train_acc:.4f}, quantization_error: {quantization_error:.4f}"
             )
         train_results.append(
-            (epoch, train_loss, train_acc, test_acc, quantization_error)
+            (epoch, train_loss, train_acc, quantization_error)
         )
 
     torch.save(model.state_dict(), model_path)
@@ -239,6 +214,7 @@ def main(
     full_precision_model_path = (
         f"{results_dir}/{model_type}_{dataset}_full_precision.pth"
     )
+    Path(results_dir).mkdir(parents=True, exist_ok=True)
 
     quantizer = {
         "none": None,

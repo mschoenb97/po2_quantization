@@ -9,10 +9,17 @@ $ python3 create_vm.py --project_id="high-performance-ml" --vm_name="sleds" --di
 ### Install dependencies
 
 ```bash
-$ conda create --name venv --file requirements.txt
 $ pip install -r requirements.txt
+
+### Download data
+
+```bash
+$ python download_data.py --dataset=cifar
+$ huggingface-cli login # enter token first
+$ python download_data.py --dataset=imagenet
 ```
-### Test a single training
+
+### Test a single training run
 
 ```
 $ export LD_LIBRARY_PATH=
@@ -35,5 +42,5 @@ $ ./train_launch.sh resnet56 cifar 164 128 0.1
 
 ```bash
 # get test results for full precision, PTQ and QAT
-$ torchrun --standalone --nnodes=1 --nproc-per-node=4 test.py --model_type=resnet20 --dataset=cifar
+$ python test.py --model_type=resnet20 --dataset=cifar
 ```

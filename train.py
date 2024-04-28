@@ -13,6 +13,8 @@ from torch.nn.parallel import DistributedDataParallel
 from torch.optim.lr_scheduler import LambdaLR, MultiStepLR
 from torch.utils.data import DataLoader
 from pathlib import Path
+from torchmetrics.classification import MulticlassAccuracy
+
 
 from models.resnet import ResNet20, ResNet32, ResNet44, ResNet56
 from utils.dataloaders import get_dataloaders
@@ -33,6 +35,7 @@ def run_train_loop(
     model_path: str,
     num_epochs: int,
     lr: float,
+    train_acc: MulticlassAccuracy,
     momentum: float = 0.9,
     weight_decay: float = 1e-4,
     percent_warmup_epochs: float = 0.1,
@@ -61,10 +64,10 @@ def run_train_loop(
     dist.barrier()
 
     for epoch in range(num_epochs):
+
         # set the epoch ID for the DistributedSampler
         train_loader.sampler.set_epoch(epoch)
         total_loss = torch.tensor(0.0, dtype=torch.float32, device=device)
-        total_correct = torch.tensor(0, dtype=torch.int64, device=device)
         total_samples = torch.tensor(0, dtype=torch.int64, device=device)
         model.train()
 
@@ -78,7 +81,7 @@ def run_train_loop(
 
             with torch.no_grad():
                 _, predicted = torch.max(outputs, 1)
-                total_correct += (predicted == labels).sum().item()
+                train_acc(predicted, labels)
                 total_samples += labels.size(0)
 
             loss.backward()
@@ -92,11 +95,10 @@ def run_train_loop(
 
         # sum values across all processes
         dist.all_reduce(total_loss, op=dist.ReduceOp.SUM)
-        dist.all_reduce(total_correct, op=dist.ReduceOp.SUM)
         dist.all_reduce(total_samples, op=dist.ReduceOp.SUM)
 
         train_loss = total_loss.item() / total_samples.item()
-        train_acc = total_correct.item() / total_samples.item()
+        train_accuracy = train_acc.compute().item() # total acc over all batches
 
         total_quantization_error, numel = model.module.get_quantization_error()
         quantization_error = total_quantization_error / numel
@@ -105,12 +107,15 @@ def run_train_loop(
 
         if int(os.environ["LOCAL_RANK"]) == 0:
             print(
-                f"epoch: {epoch}, train_loss: {train_loss:.4f}, train_acc: {train_acc:.4f}, quantization_error: {quantization_error:.4f}"
+                f"epoch: {epoch}, train_loss: {train_loss:.4f}, train_acc: {train_accuracy:.4f}, quantization_error: {quantization_error:.4f}"
             )
         train_results.append(
-            (epoch, train_loss, train_acc, quantization_error)
+            (epoch, train_loss, train_accuracy, quantization_error)
         )
+        train_acc.reset() # reset internal state
 
+    if int(os.environ["LOCAL_RANK"]) == 0:
+        print(f"saving model at {model_path} 💾")
     torch.save(model.state_dict(), model_path)
     return train_results
 
@@ -126,6 +131,7 @@ def train_model(
     model_path: str,
     full_precision_model_path: str,
 ) -> List[Tuple[int, float, float, float]]:
+
     if model_type == "resnet20":
         model = ResNet20(quantize_fn=quantizer, bits=bits)
     elif model_type == "resnet32":
@@ -140,6 +146,7 @@ def train_model(
     device = torch.device("cuda", local_rank)
     print(f"{device = } 👨‍💻")
 
+    train_acc = MulticlassAccuracy(num_classes=len(train_loader.dataset.classes), average='micro').to(device)
     model = model.to(device)
     model = DistributedDataParallel(
         model, device_ids=[local_rank], output_device=local_rank
@@ -162,6 +169,7 @@ def train_model(
         model_path=model_path,
         num_epochs=num_epochs,
         lr=lr,
+        train_acc=train_acc,
     )
     return train_res
 
@@ -211,6 +219,7 @@ def main(
         if quantizer_type == "none"
         else f"{model_type}_{dataset}_{quantizer_type}_{bits}"
     )
+    
     full_precision_model_path = (
         f"{results_dir}/{model_type}_{dataset}_full_precision.pth"
     )

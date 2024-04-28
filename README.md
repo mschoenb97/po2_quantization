@@ -43,4 +43,7 @@ $ ./train_launch.sh resnet56 cifar 164 128 0.1
 ```bash
 # get test results for full precision, PTQ and QAT
 $ python test.py --model_type=resnet20 --dataset=cifar
+$ python test.py --model_type=resnet32 --dataset=cifar
+$ python test.py --model_type=resnet44 --dataset=cifar
+$ python test.py --model_type=resnet56 --dataset=cifar
 ```

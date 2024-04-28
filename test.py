@@ -115,7 +115,7 @@ def main(
 
     # Full Precision Training
     test_acc = test_model(model=model, test_loader=test_loader, device=device)
-    print(f"full_precision = {test_acc * 100:.2f}")
+    print(f"full_precision = {test_acc * 100:.2f}%")
     test_results.append(("full_precision", test_acc))
 
     # Post Training Quantization
@@ -127,28 +127,28 @@ def main(
                 model=model_copy, test_loader=test_loader, device=device
             )
             test_results.append((f"ptq_{quantizer_type}_{bits}", test_acc))
-            print(f"ptq_{quantizer_type}_{bits} = {test_acc * 100:.2f}")
+            print(f"ptq_{quantizer_type}_{bits} = {test_acc * 100:.2f}%")
 
     # Quantization Aware Training
-    # for quantizer_type, quantizer in quantizer_dict.items():
-    #     for bits in bits_to_try:
-    #         train_config = f"{model_type}_{dataset}_{quantizer_type}_{bits}"
-    #         if model_type == "resnet20":
-    #             model = ResNet20(quantize_fn=quantizer, bits=bits)
-    #         elif model_type == "resnet32":
-    #             model = ResNet32(quantize_fn=quantizer, bits=bits)
-    #         elif model_type == "resnet44":
-    #             model = ResNet44(quantize_fn=quantizer, bits=bits)
-    #         elif model_type == "resnet56":
-    #             model = ResNet56(quantize_fn=quantizer, bits=bits)
+    for quantizer_type, quantizer in quantizer_dict.items():
+        for bits in bits_to_try:
+            train_config = f"{model_type}_{dataset}_{quantizer_type}_{bits}"
+            if model_type == "resnet20":
+                model = ResNet20(quantize_fn=quantizer, bits=bits)
+            elif model_type == "resnet32":
+                model = ResNet32(quantize_fn=quantizer, bits=bits)
+            elif model_type == "resnet44":
+                model = ResNet44(quantize_fn=quantizer, bits=bits)
+            elif model_type == "resnet56":
+                model = ResNet56(quantize_fn=quantizer, bits=bits)
 
-    #         model.to(device)
-    #         load_distributed_state_dict(
-    #             model=model, model_path=f"{results_dir}/{train_config}.pth"
-    #         )
-    #         test_acc = test_model(model=model, test_loader=test_loader, device=device)
-    #         test_results.append((f"qat_{quantizer_type}_{bits}", test_acc))
-    #         print(f"qat_{quantizer_type}_{bits} = {test_acc * 100:.2f}")
+            model.to(device)
+            load_distributed_state_dict(
+                model=model, model_path=f"{results_dir}/{train_config}.pth"
+            )
+            test_acc = test_model(model=model, test_loader=test_loader, device=device)
+            test_results.append((f"qat_{quantizer_type}_{bits}", test_acc))
+            print(f"qat_{quantizer_type}_{bits} = {test_acc * 100:.2f}%")
 
     with open(f"{results_dir}/{model_type}_{dataset}_results.csv", mode="w") as f:
         writer = csv.writer(f)

@@ -4,49 +4,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-
-class QuantizedConv2d(nn.Conv2d):
-    def __init__(
-        self,
-        in_channels,
-        out_channels,
-        kernel_size,
-        stride=1,
-        padding=1,
-        dilation=1,
-        groups=1,
-        bias=False,
-        quantize_fn=None,
-        fsr=1,
-        bits=4,
-    ):
-        super().__init__(
-            in_channels,
-            out_channels,
-            kernel_size,
-            stride,
-            padding,
-            dilation,
-            groups,
-            bias,
-        )
-        self.quantize_fn = quantize_fn
-        self.bits = bits
-
-    def forward(self, input):
-        # apply quantize function for QAT, otherwise normal conv2d forward pass
-        if self.quantize_fn is not None:
-            quantized_weight = self.quantize_fn.apply(self.weight, self.bits)
-            return self._conv_forward(input, quantized_weight, self.bias)
-        else:
-            return self._conv_forward(input, self.weight, self.bias)
-
-    def get_quantization_error(self):
-        if self.quantize_fn is not None:
-            quantized_weight = self.quantize_fn.apply(self.weight, self.bits)
-            return torch.sum((quantized_weight - self.weight) ** 2), self.weight.numel()
-        else:
-            return 0, self.weight.numel()
+from models.quantized_conv import QuantizedConv2d
 
 
 class BasicBlock(nn.Module):
@@ -60,7 +18,6 @@ class BasicBlock(nn.Module):
         downsample: Optional[nn.Module] = None,
         quantize_fn: Optional[Callable] = None,
         bits: int = 7,
-        dist: bool = True,
     ) -> None:
         super().__init__()
 
@@ -77,7 +34,7 @@ class BasicBlock(nn.Module):
             quantize_fn=quantize_fn,
             bits=bits,
         )
-        self.bn1 = nn.SyncBatchNorm(planes) if dist else nn.BatchNorm2d(planes)
+        self.bn1 = nn.SyncBatchNorm(planes)
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = QuantizedConv2d(
             planes,
@@ -91,7 +48,7 @@ class BasicBlock(nn.Module):
             quantize_fn=quantize_fn,
             bits=bits,
         )
-        self.bn2 = nn.SyncBatchNorm(planes) if dist else nn.BatchNorm2d(planes)
+        self.bn2 = nn.SyncBatchNorm(planes)
         self.downsample = downsample
         self.stride = stride
 
@@ -114,9 +71,8 @@ class BasicBlock(nn.Module):
         return out
 
     def get_quantization_error(self):
-        quantization_error = 0.0
-        numel = 0
-
+        quantization_error, numel = 0.0, 0
+        
         qerror1, numel1 = self.conv1.get_quantization_error()
         qerror2, numel2 = self.conv2.get_quantization_error()
 
@@ -133,11 +89,8 @@ class ResNet(nn.Module):
         num_blocks: List[int],
         num_filters: List[int],
         num_classes: int = 10,
-        groups: int = 1,
-        width_per_group: int = 64,
         quantize_fn: Optional[Callable] = None,
         bits: int = 7,
-        dist: bool = True,
     ) -> None:
         super().__init__()
 
@@ -147,9 +100,7 @@ class ResNet(nn.Module):
         self.conv1 = nn.Conv2d(
             3, self.inplanes, kernel_size=3, stride=1, padding=1, bias=False
         )
-        self.bn1 = (
-            nn.SyncBatchNorm(self.inplanes) if dist else nn.BatchNorm2d(self.inplanes)
-        )
+        self.bn1 = nn.SyncBatchNorm(self.inplanes)
         self.relu = nn.ReLU(inplace=True)
 
         self.layer1 = self._make_layer(
@@ -159,7 +110,6 @@ class ResNet(nn.Module):
             stride=1,
             quantize_fn=quantize_fn,
             bits=bits,
-            dist=dist,
         )
         self.layer2 = self._make_layer(
             block,
@@ -168,7 +118,6 @@ class ResNet(nn.Module):
             stride=2,
             quantize_fn=quantize_fn,
             bits=bits,
-            dist=dist,
         )  # stride 2 creates subsampling
         self.layer3 = self._make_layer(
             block,
@@ -177,7 +126,6 @@ class ResNet(nn.Module):
             stride=2,
             quantize_fn=quantize_fn,
             bits=bits,
-            dist=dist,
         )
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(64 * block.expansion, num_classes)
@@ -197,11 +145,9 @@ class ResNet(nn.Module):
         stride: int = 1,
         quantize_fn: Optional[Callable] = None,
         bits: int = 7,
-        dist: bool = True,
     ) -> nn.Sequential:
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
-            batch_norm = nn.SyncBatchNorm if dist else nn.BatchNorm2d
             downsample = nn.Sequential(
                 QuantizedConv2d(
                     self.inplanes,
@@ -213,7 +159,7 @@ class ResNet(nn.Module):
                     quantize_fn=quantize_fn,
                     bits=bits,
                 ),
-                batch_norm(planes * block.expansion),
+                nn.SyncBatchNorm(planes * block.expansion),
             )
 
         layers = []
@@ -225,7 +171,6 @@ class ResNet(nn.Module):
                 downsample,
                 quantize_fn=quantize_fn,
                 bits=bits,
-                dist=dist,
             )
         )
         self.inplanes = planes * block.expansion
@@ -237,7 +182,6 @@ class ResNet(nn.Module):
                     planes,
                     quantize_fn=quantize_fn,
                     bits=bits,
-                    dist=dist,
                 )
             )
 
@@ -257,8 +201,7 @@ class ResNet(nn.Module):
         return self.fc(x)  # 64x10
 
     def _get_quantization_error_for_layer(self, layer: nn.Module) -> Tuple[float, int]:
-        quantization_error = 0.0
-        numel = 0
+        quantization_error, numel = 0.0, 0
 
         for sub_layer in layer:
             if isinstance(sub_layer, BasicBlock):
@@ -269,8 +212,7 @@ class ResNet(nn.Module):
         return quantization_error, numel
 
     def get_quantization_error(self):
-        quantization_error = 0.0
-        numel = 0
+        quantization_error, numel = 0.0, 0
 
         qerror1, numel1 = self._get_quantization_error_for_layer(self.layer1)
         qerror2, numel2 = self._get_quantization_error_for_layer(self.layer2)
@@ -288,7 +230,6 @@ def ResNet20(
     num_classes: int = 10,
     quantize_fn: Optional[Callable] = None,
     bits: int = 4,
-    dist: bool = True,
     **kwargs: Any,
 ) -> ResNet:
     return ResNet(
@@ -298,7 +239,6 @@ def ResNet20(
         num_classes=num_classes,
         quantize_fn=quantize_fn,
         bits=bits,
-        dist=dist,
         **kwargs,
     )
 
@@ -309,7 +249,6 @@ def ResNet32(
     num_classes: int = 10,
     quantize_fn: Optional[Callable] = None,
     bits: int = 4,
-    dist: bool = True,
     **kwargs: Any,
 ) -> ResNet:
     return ResNet(
@@ -319,7 +258,6 @@ def ResNet32(
         num_classes=num_classes,
         quantize_fn=quantize_fn,
         bits=bits,
-        dist=dist,
         **kwargs,
     )
 
@@ -330,7 +268,6 @@ def ResNet44(
     num_classes: int = 10,
     quantize_fn: Optional[Callable] = None,
     bits: int = 4,
-    dist: bool = True,
     **kwargs: Any,
 ) -> ResNet:
     return ResNet(
@@ -340,7 +277,6 @@ def ResNet44(
         num_classes=num_classes,
         quantize_fn=quantize_fn,
         bits=bits,
-        dist=dist,
         **kwargs,
     )
 
@@ -351,7 +287,6 @@ def ResNet56(
     num_classes: int = 10,
     quantize_fn: Optional[Callable] = None,
     bits: int = 4,
-    dist: bool = True,
     **kwargs: Any,
 ) -> ResNet:
     return ResNet(
@@ -361,6 +296,5 @@ def ResNet56(
         num_classes=num_classes,
         quantize_fn=quantize_fn,
         bits=bits,
-        dist=dist,
         **kwargs,
     )

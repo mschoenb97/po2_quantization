@@ -1,6 +1,7 @@
 import csv
 import os
 import random
+from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
 import fire
@@ -12,10 +13,10 @@ import torch.optim as optim
 from torch.nn.parallel import DistributedDataParallel
 from torch.optim.lr_scheduler import LambdaLR, MultiStepLR
 from torch.utils.data import DataLoader
-from pathlib import Path
 from torchmetrics.classification import MulticlassAccuracy
 
-
+from models.mobile_vit import MobileVIT
+from models.mobilenet import MobileNetV2
 from models.resnet import ResNet20, ResNet32, ResNet44, ResNet56
 from utils.dataloaders import get_dataloaders
 from utils.quantizers import (
@@ -44,7 +45,7 @@ def run_train_loop(
     lr *= dist.get_world_size()
     warmup_epochs = int(percent_warmup_epochs * num_epochs)
 
-    if "resnet" in model_type:
+    if "resnet" in model_type or "mobilenet" in model_type:
         optimizer = optim.SGD(
             model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay
         )
@@ -64,7 +65,6 @@ def run_train_loop(
     dist.barrier()
 
     for epoch in range(num_epochs):
-
         # set the epoch ID for the DistributedSampler
         train_loader.sampler.set_epoch(epoch)
         total_loss = torch.tensor(0.0, dtype=torch.float32, device=device)
@@ -87,7 +87,7 @@ def run_train_loop(
             loss.backward()
             optimizer.step()
 
-        if "resnet" in model_type:
+        if "resnet" in model_type or "mobilenet" in model_type:
             if epoch < warmup_epochs:
                 scheduler_warmup.step()
             else:
@@ -98,7 +98,7 @@ def run_train_loop(
         dist.all_reduce(total_samples, op=dist.ReduceOp.SUM)
 
         train_loss = total_loss.item() / total_samples.item()
-        train_accuracy = train_acc.compute().item() # total acc over all batches
+        train_accuracy = train_acc.compute().item()  # total acc over all batches
 
         total_quantization_error, numel = model.module.get_quantization_error()
         quantization_error = total_quantization_error / numel
@@ -109,10 +109,8 @@ def run_train_loop(
             print(
                 f"epoch: {epoch}, train_loss: {train_loss:.4f}, train_acc: {train_accuracy:.4f}, quantization_error: {quantization_error:.4f}"
             )
-        train_results.append(
-            (epoch, train_loss, train_accuracy, quantization_error)
-        )
-        train_acc.reset() # reset internal state
+        train_results.append((epoch, train_loss, train_accuracy, quantization_error))
+        train_acc.reset()  # reset internal state
 
     if int(os.environ["LOCAL_RANK"]) == 0:
         print(f"saving model at {model_path} 💾")
@@ -131,22 +129,29 @@ def train_model(
     model_path: str,
     full_precision_model_path: str,
 ) -> List[Tuple[int, float, float, float]]:
+    num_classes = len(train_loader.dataset.classes)
 
     if model_type == "resnet20":
-        model = ResNet20(quantize_fn=quantizer, bits=bits)
+        model = ResNet20(num_classes=num_classes, quantize_fn=quantizer, bits=bits)
     elif model_type == "resnet32":
-        model = ResNet32(quantize_fn=quantizer, bits=bits)
+        model = ResNet32(num_classes=num_classes, quantize_fn=quantizer, bits=bits)
     elif model_type == "resnet44":
-        model = ResNet44(quantize_fn=quantizer, bits=bits)
+        model = ResNet44(num_classes=num_classes, quantize_fn=quantizer, bits=bits)
     elif model_type == "resnet56":
-        model = ResNet56(quantize_fn=quantizer, bits=bits)
+        model = ResNet56(num_classes=num_classes, quantize_fn=quantizer, bits=bits)
+    elif model_type == "mobilenet":
+        model = MobileNetV2(num_classes=num_classes, quantize_fn=quantizer, bits=bits)
+    elif model_type == "mobilevit":
+        model = MobileVIT(num_classes=num_classes, quantize_fn=quantizer, bits=bits)
 
     local_rank = int(os.environ["LOCAL_RANK"])
     torch.manual_seed(local_rank)  # set different seed for each process
     device = torch.device("cuda", local_rank)
     print(f"{device = } 👨‍💻")
 
-    train_acc = MulticlassAccuracy(num_classes=len(train_loader.dataset.classes), average='micro').to(device)
+    train_acc = MulticlassAccuracy(
+        num_classes=len(train_loader.dataset.classes), average="micro"
+    ).to(device)
     model = model.to(device)
     model = DistributedDataParallel(
         model, device_ids=[local_rank], output_device=local_rank
@@ -202,6 +207,8 @@ def main(
         "resnet32",
         "resnet44",
         "resnet56",
+        "mobilenet",
+        "mobilevit",
     ], "invalid model type"
     assert dataset in ["cifar", "imagenet"], "invalid dataset"
     assert quantizer_type in [
@@ -219,7 +226,7 @@ def main(
         if quantizer_type == "none"
         else f"{model_type}_{dataset}_{quantizer_type}_{bits}"
     )
-    
+
     full_precision_model_path = (
         f"{results_dir}/{model_type}_{dataset}_full_precision.pth"
     )
@@ -243,8 +250,8 @@ def main(
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = False
+    torch.backends.cudnn.benchmark = True
 
     train_loader, test_loader = get_dataloaders(
         dataset=dataset,
@@ -271,9 +278,7 @@ def main(
     if local_rank == 0:
         with open(f"{results_dir}/{train_config}.csv", mode="w") as f:
             writer = csv.writer(f)
-            writer.writerow(
-                ["epoch", "train_loss", "train_acc", "test_acc", "quantization_error"]
-            )
+            writer.writerow(["epoch", "train_loss", "train_acc", "quantization_error"])
             writer.writerows(train_results)
 
     if local_rank == 0:

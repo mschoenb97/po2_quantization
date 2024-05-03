@@ -1,236 +1,255 @@
-from typing import Callable, List, Optional
+"""
+Creates a MobileNetV2 Model as defined in:
+Mark Sandler, Andrew Howard, Menglong Zhu, Andrey Zhmoginov, Liang-Chieh Chen. (2018).
+MobileNetV2: Inverted Residuals and Linear Bottlenecks
+arXiv preprint arXiv:1801.04381.
+Adapted from https://github.com/tonylins/pytorch-mobilenet-v2
+"""
 
-import torch
+import math
+from typing import Any, Callable, Optional, Tuple
+
 import torch.nn as nn
-from torch import Tensor
+
+from models.quantized_conv import QuantizedConv2d
 
 
-class QuantizedConv2d(nn.Conv2d):
-    def __init__(
-        self,
-        in_channels,
-        out_channels,
-        kernel_size,
-        stride=1,
-        padding=1,
-        dilation=1,
-        groups=1,
-        bias=False,
-        quantize_fn=None,
-        fsr=1,
-        bits=4,
-    ):
-        super().__init__(
-            in_channels,
-            out_channels,
-            kernel_size,
-            stride,
-            padding,
-            dilation,
-            groups,
-            bias,
-        )
-        self.quantize_fn = quantize_fn
-        self.bits = bits
+def _make_divisible(v, divisor, min_value=None):
+    if min_value is None:
+        min_value = divisor
+    new_v = max(min_value, int(v + divisor / 2) // divisor * divisor)
+    # make sure that round down does not go down by more than 10%.
+    if new_v < 0.9 * v:
+        new_v += divisor
+    return new_v
 
-    def forward(self, input):
-        # apply quantize function for QAT, otherwise normal conv2d forward pass
-        if self.quantize_fn is not None:
-            quantized_weight = self.quantize_fn.apply(self.weight, self.bits)
-            return self._conv_forward(input, quantized_weight, self.bias)
-        else:
-            return self._conv_forward(input, self.weight, self.bias)
 
-    def get_quantization_error(self):
-        if self.quantize_fn is not None:
-            quantized_weight = self.quantize_fn.apply(self.weight, self.bits)
-            return torch.sum((quantized_weight - self.weight) ** 2), self.weight.numel()
-        else:
-            return 0, self.weight.numel()
+def quantized_conv_3x3_bn(inp, oup, stride, quantize_fn=None, bits=4):
+    return nn.Sequential(
+        QuantizedConv2d(
+            inp, oup, 3, stride, 1, bias=False, quantize_fn=quantize_fn, bits=bits
+        ),
+        nn.SyncBatchNorm(oup),
+        nn.ReLU6(inplace=True),
+    )
+
+
+def conv_3x3_bn(inp, oup, stride):
+    return nn.Sequential(
+        nn.Conv2d(inp, oup, 3, stride, 1, bias=False),
+        nn.SyncBatchNorm(oup),
+        nn.ReLU6(inplace=True),
+    )
+
+
+def conv_1x1_bn(inp, oup):
+    return nn.Sequential(
+        nn.Conv2d(inp, oup, 1, 1, 0, bias=False),
+        nn.SyncBatchNorm(oup),
+        nn.ReLU6(inplace=True),
+    )
 
 
 class InvertedResidual(nn.Module):
-    def __init__(
-        self,
-        inp: int,
-        oup: int,
-        stride: int,
-        expand_ratio: int,
-        quantize_fn: Optional[Callable] = None,
-        bits: int = 4,
-    ):
-        super(InvertedResidual, self).__init__()
-        self.stride = stride
+    def __init__(self, inp, oup, stride, expand_ratio, quantize_fn=None, bits=4):
+        super().__init__()
         assert stride in [1, 2]
 
-        hidden_dim = int(round(inp * expand_ratio))
-        self.use_res_connect = self.stride == 1 and inp == oup
+        hidden_dim = round(inp * expand_ratio)
+        self.identity = stride == 1 and inp == oup
 
-        layers: List[nn.Module] = []
-        if expand_ratio != 1:
-            # pw
-            layers.append(
-                QuantizedConv2d(
-                    inp, hidden_dim, kernel_size=1, quantize_fn=quantize_fn, bits=bits
-                )
-            )
-            layers.append(nn.BatchNorm2d(hidden_dim))
-            layers.append(nn.ReLU6(inplace=True))
-
-        layers.extend(
-            [
+        if expand_ratio == 1:
+            self.conv = nn.Sequential(
                 # dw
                 QuantizedConv2d(
                     hidden_dim,
                     hidden_dim,
-                    stride=stride,
-                    padding=1,
+                    3,
+                    stride,
+                    1,
                     groups=hidden_dim,
+                    bias=False,
                     quantize_fn=quantize_fn,
                     bits=bits,
                 ),
-                nn.BatchNorm2d(hidden_dim),
+                nn.SyncBatchNorm(hidden_dim),
                 nn.ReLU6(inplace=True),
                 # pw-linear
                 QuantizedConv2d(
-                    hidden_dim, oup, kernel_size=1, quantize_fn=quantize_fn, bits=bits
+                    hidden_dim,
+                    oup,
+                    1,
+                    1,
+                    0,
+                    bias=False,
+                    quantize_fn=quantize_fn,
+                    bits=bits,
                 ),
-                nn.BatchNorm2d(oup),
-            ]
-        )
-        self.conv = nn.Sequential(*layers)
-
-    def forward(self, x: Tensor) -> Tensor:
-        if self.use_res_connect:
-            return x + self.conv(x)
+                nn.SyncBatchNorm(oup),
+            )
         else:
-            return self.conv(x)
+            self.conv = nn.Sequential(
+                # pw
+                QuantizedConv2d(
+                    inp,
+                    hidden_dim,
+                    1,
+                    1,
+                    0,
+                    bias=False,
+                    quantize_fn=quantize_fn,
+                    bits=bits,
+                ),
+                nn.SyncBatchNorm(hidden_dim),
+                nn.ReLU6(inplace=True),
+                # dw
+                QuantizedConv2d(
+                    hidden_dim,
+                    hidden_dim,
+                    3,
+                    stride,
+                    1,
+                    groups=hidden_dim,
+                    bias=False,
+                    quantize_fn=quantize_fn,
+                    bits=bits,
+                ),
+                nn.SyncBatchNorm(hidden_dim),
+                nn.ReLU6(inplace=True),
+                # pw-linear
+                QuantizedConv2d(
+                    hidden_dim,
+                    oup,
+                    1,
+                    1,
+                    0,
+                    bias=False,
+                    quantize_fn=quantize_fn,
+                    bits=bits,
+                ),
+                nn.SyncBatchNorm(oup),
+            )
+
+    def forward(self, x):
+        return x + self.conv(x) if self.identity else self.conv(x)
 
     def get_quantization_error(self):
-        quantization_error = 0.0
-        numel = 0
+        quantization_error, numel = 0.0, 0
 
-        for layer in self.conv:
-            if isinstance(layer, QuantizedConv2d):
-                qerror, n = layer.get_quantization_error()
+        for sub_layer in self.conv:
+            if isinstance(sub_layer, QuantizedConv2d):
+                qerror, numel_sub = sub_layer.get_quantization_error()
                 quantization_error += qerror
-                numel += n
+                numel += numel_sub
 
         return quantization_error, numel
 
 
-class MobileNetV2(nn.Module):
+class MobileNet(nn.Module):
     def __init__(
         self,
         num_classes: int = 10,
         width_mult: float = 1.0,
-        inverted_residual_setting: Optional[List[List[int]]] = None,
-        round_nearest: int = 8,
-        block: Optional[Callable[..., nn.Module]] = None,
         quantize_fn: Optional[Callable] = None,
         bits: int = 4,
-    ) -> None:
-        super(MobileNetV2, self).__init__()
-
-        if block is None:
-            block = InvertedResidual
-
-        input_channel = 32
-        last_channel = 1280
-
-        if inverted_residual_setting is None:
-            inverted_residual_setting = [
-                # t, c, n, s
-                [1, 16, 1, 1],
-                [6, 24, 2, 2],
-                [6, 32, 3, 2],
-                [6, 64, 4, 2],
-                [6, 96, 3, 1],
-                [6, 160, 3, 2],
-                [6, 320, 1, 1],
-            ]
-
-        # only check the first element, assuming user knows t,c,n,s are required
-        if (
-            len(inverted_residual_setting) == 0
-            or len(inverted_residual_setting[0]) != 4
-        ):
-            raise ValueError(
-                f"inverted_residual_setting should be non-empty or a 4-element list, got {inverted_residual_setting}"
-            )
-
-        # building first layer
-        input_channel = _make_divisible(input_channel * width_mult, round_nearest)
-        self.last_channel = _make_divisible(
-            last_channel * max(1.0, width_mult), round_nearest
-        )
-
-        features: List[nn.Module] = [
-            nn.Conv2d(3, input_channel, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(input_channel),
-            nn.ReLU6(inplace=True),
+    ):
+        super().__init__()
+        # setting of inverted residual blocks
+        self.cfgs = [
+            # t, c, n, s
+            [1, 16, 1, 1],
+            [6, 24, 2, 2],
+            [6, 32, 3, 2],
+            [6, 64, 4, 2],
+            [6, 96, 3, 1],
+            [6, 160, 3, 2],
+            [6, 320, 1, 1],
         ]
 
-        # building inverted residual blocks
-        for t, c, n, s in inverted_residual_setting:
-            output_channel = _make_divisible(c * width_mult, round_nearest)
+        # building first layer
+        input_channel = _make_divisible(32 * width_mult, 4 if width_mult == 0.1 else 8)
+        # first conv not quantized
+        layers = [conv_3x3_bn(3, input_channel, 2)]
+        for t, c, n, s in self.cfgs:
+            output_channel = _make_divisible(
+                c * width_mult, 4 if width_mult == 0.1 else 8
+            )
             for i in range(n):
-                stride = s if i == 0 else 1
-                features.append(
-                    block(
+                layers.append(
+                    InvertedResidual(
                         input_channel,
                         output_channel,
-                        stride,
-                        expand_ratio=t,
+                        s if i == 0 else 1,
+                        t,
                         quantize_fn=quantize_fn,
                         bits=bits,
                     )
                 )
                 input_channel = output_channel
-
+        self.features = nn.Sequential(*layers)
         # building last several layers
-        features.append(
-            nn.Conv2d(
-                input_channel, self.last_channel, kernel_size=1, stride=1, bias=False
-            )
+        output_channel = (
+            _make_divisible(1280 * width_mult, 4 if width_mult == 0.1 else 8)
+            if width_mult > 1.0
+            else 1280
         )
-        features.append(nn.BatchNorm2d(self.last_channel))
-        features.append(nn.ReLU6(inplace=True))
+        # last conv not quantized
+        self.conv = conv_1x1_bn(input_channel, output_channel)
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.classifier = nn.Linear(output_channel, num_classes)
 
-        # make it nn.Sequential
-        self.features = nn.Sequential(*features)
+        self._initialize_weights()
 
-        # building classifier
-        self.classifier = nn.Sequential(
-            nn.Dropout(0.2),
-            nn.Linear(self.last_channel, num_classes),
-        )
-
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x):
         x = self.features(x)
-        x = nn.functional.adaptive_avg_pool2d(x, (1, 1))
-        x = torch.flatten(x, 1)
+        x = self.conv(x)
+        x = self.avgpool(x)
+        x = x.view(x.size(0), -1)
         x = self.classifier(x)
         return x
 
-    def get_quantization_error(self):
-        quantization_error = 0.0
-        numel = 0
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                m.weight.data.normal_(0, math.sqrt(2.0 / n))
+                if m.bias is not None:
+                    m.bias.data.zero_()
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
+            elif isinstance(m, nn.Linear):
+                m.weight.data.normal_(0, 0.01)
+                m.bias.data.zero_()
 
-        for layer in self.features:
-            if isinstance(layer, InvertedResidual):
-                qerror, n = layer.get_quantization_error()
+    def _get_quantization_error_for_layer(self, layer: nn.Module) -> Tuple[float, int]:
+        quantization_error, numel = 0.0, 0
+
+        for sub_layer in layer:
+            if isinstance(sub_layer, InvertedResidual):
+                qerror, numel_sub = sub_layer.get_quantization_error()
                 quantization_error += qerror
-                numel += n
+                numel += numel_sub
+
+        return quantization_error, numel
+
+    def get_quantization_error(self):
+        quantization_error, numel = 0.0, 0
+
+        qerror, numel = self._get_quantization_error_for_layer(self.features)
+        quantization_error += qerror
+        numel += numel
 
         return quantization_error, numel
 
 
-def _make_divisible(v: float, divisor: int, min_value: Optional[int] = None) -> int:
-    if min_value is None:
-        min_value = divisor
-    new_v = max(min_value, int(v + divisor / 2) // divisor * divisor)
-    # Make sure that round down does not go down by more than 10%.
-    if new_v < 0.9 * v:
-        new_v += divisor
-    return new_v
+def MobileNetV2(
+    *,
+    num_classes: int = 10,
+    quantize_fn: Optional[Callable] = None,
+    bits: int = 4,
+    **kwargs: Any,
+) -> MobileNet:
+    return MobileNet(
+        num_classes=num_classes, quantize_fn=quantize_fn, bits=bits, **kwargs
+    )

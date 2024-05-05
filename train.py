@@ -45,21 +45,20 @@ def run_train_loop(
     lr *= dist.get_world_size()
     warmup_epochs = int(percent_warmup_epochs * num_epochs)
 
-    if "resnet" in model_type or "mobilenet" in model_type:
-        optimizer = optim.SGD(
-            model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay
-        )
-        criterion = nn.CrossEntropyLoss()
+    optimizer = optim.SGD(
+        model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay
+    )
+    criterion = nn.CrossEntropyLoss()
 
-        def lr_lambda(epoch):
-            return (epoch + 1) / (warmup_epochs + 1)
+    def lr_lambda(epoch):
+        return (epoch + 1) / (warmup_epochs + 1)
 
-        scheduler_warmup = LambdaLR(optimizer, lr_lambda=lr_lambda)
+    scheduler_warmup = LambdaLR(optimizer, lr_lambda=lr_lambda)
 
-        # divide lr at epoch 82 and 123 (391 iterations per epoch)
-        scheduler_multistep = MultiStepLR(
-            optimizer, milestones=[82 - warmup_epochs, 123 - warmup_epochs], gamma=0.1
-        )
+    # divide lr at epoch 82 and 123 (391 iterations per epoch)
+    scheduler_multistep = MultiStepLR(
+        optimizer, milestones=[82 - warmup_epochs, 123 - warmup_epochs], gamma=0.1
+    )
 
     train_results = []
     dist.barrier()
@@ -87,11 +86,10 @@ def run_train_loop(
             loss.backward()
             optimizer.step()
 
-        if "resnet" in model_type or "mobilenet" in model_type:
-            if epoch < warmup_epochs:
-                scheduler_warmup.step()
-            else:
-                scheduler_multistep.step()
+        if epoch < warmup_epochs:
+            scheduler_warmup.step()
+        else:
+            scheduler_multistep.step()
 
         # sum values across all processes
         dist.all_reduce(total_loss, op=dist.ReduceOp.SUM)
@@ -107,7 +105,7 @@ def run_train_loop(
 
         if int(os.environ["LOCAL_RANK"]) == 0:
             print(
-                f"epoch: {epoch}, train_loss: {train_loss:.4f}, train_acc: {train_accuracy:.4f}, quantization_error: {quantization_error:.4f}"
+                f"epoch: {epoch}, train_loss: {train_loss:.4f}, train_acc: {train_accuracy:.4f}, quantization_error: {quantization_error:.10f}"
             )
         train_results.append((epoch, train_loss, train_accuracy, quantization_error))
         train_acc.reset()  # reset internal state
@@ -126,6 +124,7 @@ def train_model(
     lr: float,
     train_loader: DataLoader,
     test_loader: DataLoader,
+    image_size: Tuple[int],
     model_path: str,
     full_precision_model_path: str,
 ) -> List[Tuple[int, float, float, float]]:
@@ -142,7 +141,12 @@ def train_model(
     elif model_type == "mobilenet":
         model = MobileNetV2(num_classes=num_classes, quantize_fn=quantizer, bits=bits)
     elif model_type == "mobilevit":
-        model = MobileVIT(num_classes=num_classes, quantize_fn=quantizer, bits=bits)
+        model = MobileVIT(
+            num_classes=num_classes,
+            quantize_fn=quantizer,
+            bits=bits,
+            image_size=image_size,
+        )
 
     local_rank = int(os.environ["LOCAL_RANK"])
     torch.manual_seed(local_rank)  # set different seed for each process
@@ -253,7 +257,7 @@ def main(
     torch.backends.cudnn.deterministic = False
     torch.backends.cudnn.benchmark = True
 
-    train_loader, test_loader = get_dataloaders(
+    train_loader, test_loader, image_size = get_dataloaders(
         dataset=dataset,
         data_dir=data_dir,
         batch_size=batch_size,
@@ -271,6 +275,7 @@ def main(
         lr=lr,
         train_loader=train_loader,
         test_loader=test_loader,
+        image_size=image_size,
         model_path=f"{results_dir}/{train_config}.pth",
         full_precision_model_path=full_precision_model_path,
     )

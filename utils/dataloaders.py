@@ -70,4 +70,4 @@ def get_cifar_dataloaders(
             pin_memory=False,
         )
 
-    return train_loader, test_loader
+    return train_loader, test_loader, (32, 32)

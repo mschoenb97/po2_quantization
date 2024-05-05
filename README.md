@@ -1,4 +1,4 @@
-lear# Power of Two Quantization
+learlear# Power of Two Quantization
 
 ### Create a VM in GCP
 
@@ -41,7 +41,8 @@ For a given model and dataset, perform full precision training then all QAT conf
 
 # only perform full precision training for imagenet
 torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --model_type=resnet56 --dataset=imagenet --quantizer_type=none --bits=4 --num_epochs=164 --batch_size=128 --lr=0.1
- torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --model_type=resnet56 --dataset=imagenet --quantizer_type=none --bits=4 --num_epochs=164 --batch_size=128 --lr=0.1
+torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --model_type=mobilenet --dataset=imagenet --quantizer_type=none --bits=4 --num_epochs=164 --batch_size=128 --lr=0.1
+torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --model_type=mobilevit --dataset=imagenet --quantizer_type=none --bits=4 --num_epochs=164 --batch_size=128 --lr=0.1
 ```
 
 ### Run test scripts
@@ -52,7 +53,7 @@ python test.py --model_type=resnet20 --dataset=cifar
 python test.py --model_type=resnet32 --dataset=cifar
 python test.py --model_type=resnet44 --dataset=cifar
 python test.py --model_type=resnet56 --dataset=cifar
-python test.py --model_type=mobiletnet --dataset=cifar
+python test.py --model_type=mobilenet --dataset=cifar
 python test.py --model_type=mobilevit --dataset=cifar
 
 # get test results for full precision and PTQ for imagenet

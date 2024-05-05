@@ -21,12 +21,22 @@ from utils.quantizers import (
 )
 
 
-def quantize_model(model, quantizer, bits: int = 4):
+def quantize_model(model_type, model, quantizer, bits: int = 4):
     with torch.no_grad():
         for name, param in model.named_parameters():
-            if "conv" in name and "layer" in name:
-                quantized_param = quantizer.forward(None, param, bits=bits)
-                param.copy_(quantized_param)
+            if "resnet" in model_type:
+                if "conv" in name and "layer" in name:
+                    quantized_param = quantizer.forward(None, param, bits=bits)
+                    param.copy_(quantized_param)
+            elif model_type == "mobilenet":
+                if (
+                    "conv" in name
+                    and "features" in name
+                    and "features.1" not in name
+                    and len(param.shape) == 4
+                ):
+                    quantized_param = quantizer.forward(None, param, bits=bits)
+                    param.copy_(quantized_param)
 
 
 def test_model(model: nn.Module, test_loader: DataLoader, device: str) -> None:
@@ -109,7 +119,7 @@ def main(
     }
     bits_to_try = [2, 3, 4]
 
-    _, test_loader = get_dataloaders(
+    _, test_loader, _ = get_dataloaders(
         dataset=dataset,
         data_dir=data_dir,
         batch_size=batch_size,
@@ -141,7 +151,7 @@ def main(
     for quantizer_type, quantizer in quantizer_dict.items():
         for bits in bits_to_try:
             model_copy = deepcopy(model)
-            quantize_model(model_copy, quantizer, bits)
+            quantize_model(model_type, model_copy, quantizer, bits)
             test_acc = test_model(
                 model=model_copy, test_loader=test_loader, device=device
             )

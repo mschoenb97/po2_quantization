@@ -247,7 +247,7 @@ class MobileViTBlock(nn.Module):
         kernel_size,
         patch_size,
         mlp_dim,
-        dropout=0.0,
+        dropout: float = 0.0,
         quantize_fn: Optional[Callable] = None,
         bits: int = 4,
     ):
@@ -325,7 +325,7 @@ class MobileViT(nn.Module):
         num_classes,
         expansion=4,
         kernel_size=3,
-        patch_size=(2, 2),
+        patch_size=(1, 1),
         depths=(2, 4, 3),
         quantize_fn: Optional[Callable] = None,
         bits: int = 4,
@@ -508,8 +508,22 @@ def MobileVIT(
     num_classes: int = 10,
     quantize_fn: Optional[Callable] = None,
     bits: int = 4,
+    image_size: Tuple[int],
     **kwargs: Any,
 ) -> MobileViT:
+    # default dims and channels values based on mobilevit_xs from https://github.com/chinhsuanwu/mobilevit-pytorch
+
+    channels = (16, 32, 48, 48, 64, 64, 80, 80, 96, 96, 384)
+    dims = (96, 120, 144)
+    patch_size = (1, 1) if image_size == (32, 32) else (2, 2)
+
     return MobileViT(
-        num_classes=num_classes, quantize_fn=quantize_fn, bits=bits, **kwargs
+        num_classes=num_classes,
+        quantize_fn=quantize_fn,
+        bits=bits,
+        image_size=image_size,
+        dims=dims,
+        channels=channels,
+        patch_size=patch_size,
+        **kwargs,
     )

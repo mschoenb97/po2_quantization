@@ -37,6 +37,14 @@ def quantize_model(model_type, model, quantizer, bits: int = 4):
                 ):
                     quantized_param = quantizer.forward(None, param, bits=bits)
                     param.copy_(quantized_param)
+            elif model_type == "mobilevit":
+                if (
+                    "conv" in name
+                    and ("trunk" in name or "stem" in name)
+                    and len(param.shape) == 4
+                ):
+                    quantized_param = quantizer.forward(None, param, bits=bits)
+                    param.copy_(quantized_param)
 
 
 def test_model(model: nn.Module, test_loader: DataLoader, device: str) -> None:
@@ -64,7 +72,9 @@ def load_distributed_state_dict(model: nn.Module, model_path: str) -> None:
     model.load_state_dict(state_dict)
 
 
-def get_model(model_type: str, num_classes: int, quantize_fn: Callable, bits: int):
+def get_model(
+    model_type: str, num_classes: int, quantize_fn: Callable, bits: int, image_size
+):
     if model_type == "resnet20":
         model = ResNet20(num_classes=num_classes, quantize_fn=quantize_fn, bits=bits)
     elif model_type == "resnet32":
@@ -76,7 +86,12 @@ def get_model(model_type: str, num_classes: int, quantize_fn: Callable, bits: in
     elif model_type == "mobilenet":
         model = MobileNetV2(num_classes=num_classes, quantize_fn=quantize_fn, bits=bits)
     elif model_type == "mobilevit":
-        model = MobileVIT(num_classes=num_classes, quantize_fn=quantize_fn, bits=bits)
+        model = MobileVIT(
+            num_classes=num_classes,
+            quantize_fn=quantize_fn,
+            bits=bits,
+            image_size=image_size,
+        )
 
     return model
 
@@ -119,7 +134,7 @@ def main(
     }
     bits_to_try = [2, 3, 4]
 
-    _, test_loader, _ = get_dataloaders(
+    _, test_loader, image_size = get_dataloaders(
         dataset=dataset,
         data_dir=data_dir,
         batch_size=batch_size,
@@ -133,7 +148,11 @@ def main(
     full_precision = f"{model_type}_{dataset}_full_precision"
 
     model = get_model(
-        model_type=model_type, num_classes=num_classes, quantize_fn=None, bits=4
+        model_type=model_type,
+        num_classes=num_classes,
+        quantize_fn=None,
+        bits=4,
+        image_size=image_size,
     )
     model.to(device)
     load_distributed_state_dict(
@@ -168,6 +187,7 @@ def main(
                     num_classes=num_classes,
                     quantize_fn=quantizer,
                     bits=bits,
+                    image_size=image_size,
                 )
                 model.to(device)
                 load_distributed_state_dict(

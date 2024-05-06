@@ -1,4 +1,4 @@
-learlear# Power of Two Quantization
+lealearlear# Power of Two Quantization
 
 ### Create a VM in GCP
 

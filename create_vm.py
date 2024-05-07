@@ -145,8 +145,8 @@ def create_all_vm(
             print(f"instantiated VM {instance_name} currently running in {zone} 🥳")
             break
 
-        except:
-            continue
+        except Exception as e:
+            print(e)
 
 
 def main(

@@ -1,5 +1,16 @@
 # Power of Two Quantization
 
+### Description and Outline
+
+Here we demonstrate the use of the standard power-of-two quantization formula
+$$ PO2(x) = 2 ^ {\mathrm{round} (\log_2(x))} $$
+against our improved quantization formula
+$$ PO2_+(x) = 2 ^ {\mathrm{round} \left(\log_2\left(\sqrt{8/9} \cdot x\right)\right) }.$$
+We use ResNet, MobileNet, and MobileVit models, all of which are available in the `models` 
+directory. We also test on CIFAR and ImageNet data, which are available in the `data` and `resnet_data`
+directories. The main launch script is `train_launch.sh`, which we will describe how to use below. 
+
+
 ### Create a VM in GCP
 
 ```bash
@@ -61,3 +72,10 @@ python test.py --model_type=resnet56 --dataset=imagenet --skip_qat=True
 python test.py --model_type=mobiletnet --dataset=imagenet --skip_qat=True
 python test.py --model_type=mobilevit --dataset=imagenet --skip_qat=True
 ```
+
+### Results
+
+For results, charts, and tables, see `analysis.ipynb`. Here we see mixed results.
+Sometimes the improved formulas give us better generalization error and quantization error,
+but not always. We intend to run each of the experiments with different seeds in order 
+to get more robust results. 

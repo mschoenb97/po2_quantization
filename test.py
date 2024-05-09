@@ -1,17 +1,17 @@
 import csv
+import glob
 import random
 from copy import deepcopy
-from typing import Callable
+from pathlib import Path
 
 import fire
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from models.mobile_vit import MobileVIT
-from models.mobilenet import MobileNetV2
-from models.resnet import ResNet20, ResNet32, ResNet44, ResNet56
+from models.model import get_model
 from utils.dataloaders import get_dataloaders
 from utils.quantizers import (
     LinearPowerOfTwoPlusQuantizer,
@@ -21,30 +21,33 @@ from utils.quantizers import (
 )
 
 
-def quantize_model(model_type, model, quantizer, bits: int = 4):
+def quantize_model(model_type, model, quantizer, bits: int = 4) -> float:
+    quantization_error, numel = 0.0, 0
+
     with torch.no_grad():
         for name, param in model.named_parameters():
-            if "resnet" in model_type:
-                if "conv" in name and "layer" in name:
-                    quantized_param = quantizer.forward(None, param, bits=bits)
-                    param.copy_(quantized_param)
-            elif model_type == "mobilenet":
-                if (
-                    "conv" in name
+            if (
+                ("resnet" in model_type and "conv" in name and "layer" in name)
+                or (
+                    model_type == "mobilenet"
+                    and "conv" in name
                     and "features" in name
                     and "features.1" not in name
                     and len(param.shape) == 4
-                ):
-                    quantized_param = quantizer.forward(None, param, bits=bits)
-                    param.copy_(quantized_param)
-            elif model_type == "mobilevit":
-                if (
-                    "conv" in name
+                )
+                or (
+                    model_type == "mobilevit"
+                    and "conv" in name
                     and ("trunk" in name or "stem" in name)
                     and len(param.shape) == 4
-                ):
-                    quantized_param = quantizer.forward(None, param, bits=bits)
-                    param.copy_(quantized_param)
+                )
+            ):
+                quantized_param = quantizer.forward(None, param, bits=bits)
+                quantization_error += torch.sum((quantized_param - param) ** 2)
+                numel += param.numel()
+                param.copy_(quantized_param)
+
+    return (quantization_error / numel).item()
 
 
 def test_model(model: nn.Module, test_loader: DataLoader, device: str) -> None:
@@ -72,36 +75,12 @@ def load_distributed_state_dict(model: nn.Module, model_path: str) -> None:
     model.load_state_dict(state_dict)
 
 
-def get_model(
-    model_type: str, num_classes: int, quantize_fn: Callable, bits: int, image_size
-):
-    if model_type == "resnet20":
-        model = ResNet20(num_classes=num_classes, quantize_fn=quantize_fn, bits=bits)
-    elif model_type == "resnet32":
-        model = ResNet32(num_classes=num_classes, quantize_fn=quantize_fn, bits=bits)
-    elif model_type == "resnet44":
-        model = ResNet44(num_classes=num_classes, quantize_fn=quantize_fn, bits=bits)
-    elif model_type == "resnet56":
-        model = ResNet56(num_classes=num_classes, quantize_fn=quantize_fn, bits=bits)
-    elif model_type == "mobilenet":
-        model = MobileNetV2(num_classes=num_classes, quantize_fn=quantize_fn, bits=bits)
-    elif model_type == "mobilevit":
-        model = MobileVIT(
-            num_classes=num_classes,
-            quantize_fn=quantize_fn,
-            bits=bits,
-            image_size=image_size,
-        )
-
-    return model
-
-
 def main(
     model_type: str,
     dataset: str,
     batch_size: int = 128,
-    seed: int = 8,
     data_dir: str = "./data",
+    train_dir: str = "./train",
     results_dir: str = "./results",
     skip_qat: bool = False,
 ) -> None:
@@ -117,11 +96,11 @@ def main(
     ], "invalid model type"
     assert dataset in ["cifar", "imagenet"], "invalid dataset"
 
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    random.seed(42)
+    np.random.seed(42)
+    torch.manual_seed(42)
+    torch.cuda.manual_seed(42)
+    torch.cuda.manual_seed_all(42)
     torch.backends.cudnn.deterministic = False
     torch.backends.cudnn.benchmark = True
     device = torch.device("cuda", 0)
@@ -144,65 +123,84 @@ def main(
 
     num_classes = len(test_loader.dataset.classes)
 
-    # Post Training Quantization: load full precision model and quantize weights
-    full_precision = f"{model_type}_{dataset}_full_precision"
+    work_dir = f"{train_dir}/{dataset}/{model_type}"
+    results_work_dir = f"{results_dir}/{dataset}/{model_type}"
+    Path(results_work_dir).mkdir(parents=True, exist_ok=True)
+    seeds = [seed.split("/")[-1] for seed in glob.glob(f"{work_dir}/*")]
 
-    model = get_model(
-        model_type=model_type,
-        num_classes=num_classes,
-        quantize_fn=None,
-        bits=4,
-        image_size=image_size,
-    )
-    model.to(device)
-    load_distributed_state_dict(
-        model=model, model_path=f"{results_dir}/{full_precision}.pth"
-    )
+    for seed in seeds:
+        test_results = []
 
-    test_results = []
+        # Post Training Quantization: load full precision model and quantize weights
+        model = get_model(
+            model_type=model_type,
+            num_classes=num_classes,
+            quantize_fn=None,
+            bits=4,
+            image_size=image_size,
+        )
+        model.to(device)
+        load_distributed_state_dict(
+            model=model,
+            model_path=f"{work_dir}/{seed}/model_state/full_precision.pth",
+        )
 
-    # Full Precision Training
-    test_acc = test_model(model=model, test_loader=test_loader, device=device)
-    print(f"full_precision = {test_acc * 100:.2f}%")
-    test_results.append(("full_precision", test_acc))
+        # Full Precision Training
+        test_acc = test_model(model=model, test_loader=test_loader, device=device)
+        print(f"full_precision = {test_acc * 100:.2f}%, quantization_error = 0.0")
+        test_results.append(("full_precision", test_acc, 0.0))
 
-    # Post Training Quantization
-    for quantizer_type, quantizer in quantizer_dict.items():
-        for bits in bits_to_try:
-            model_copy = deepcopy(model)
-            quantize_model(model_type, model_copy, quantizer, bits)
-            test_acc = test_model(
-                model=model_copy, test_loader=test_loader, device=device
-            )
-            test_results.append((f"ptq_{quantizer_type}_{bits}", test_acc))
-            print(f"ptq_{quantizer_type}_{bits} = {test_acc * 100:.2f}%")
-
-    # Quantization Aware Training
-    if not skip_qat:
+        # Post Training Quantization
         for quantizer_type, quantizer in quantizer_dict.items():
             for bits in bits_to_try:
-                train_config = f"{model_type}_{dataset}_{quantizer_type}_{bits}"
-                model = get_model(
-                    model_type=model_type,
-                    num_classes=num_classes,
-                    quantize_fn=quantizer,
-                    bits=bits,
-                    image_size=image_size,
-                )
-                model.to(device)
-                load_distributed_state_dict(
-                    model=model, model_path=f"{results_dir}/{train_config}.pth"
+                model_copy = deepcopy(model)
+                quantization_error = quantize_model(
+                    model_type, model_copy, quantizer, bits
                 )
                 test_acc = test_model(
-                    model=model, test_loader=test_loader, device=device
+                    model=model_copy, test_loader=test_loader, device=device
                 )
-                test_results.append((f"qat_{quantizer_type}_{bits}", test_acc))
-                print(f"qat_{quantizer_type}_{bits} = {test_acc * 100:.2f}%")
+                test_results.append(
+                    (f"ptq_{quantizer_type}_{bits}", test_acc, quantization_error)
+                )
+                print(
+                    f"ptq_{quantizer_type}_{bits} = {test_acc * 100:.2f}%, quantization_error = {quantization_error:.10f}"
+                )
 
-    with open(f"{results_dir}/{model_type}_{dataset}_results.csv", mode="w") as f:
-        writer = csv.writer(f)
-        writer.writerow(["model", "test_acc"])
-        writer.writerows(test_results)
+        # Quantization Aware Training
+        if not skip_qat:
+            for quantizer_type, quantizer in quantizer_dict.items():
+                for bits in bits_to_try:
+                    train_config = f"{quantizer_type}_{bits}"
+                    model = get_model(
+                        model_type=model_type,
+                        num_classes=num_classes,
+                        quantize_fn=quantizer,
+                        bits=bits,
+                        image_size=image_size,
+                    )
+                    model.to(device)
+                    load_distributed_state_dict(
+                        model=model,
+                        model_path=f"{work_dir}/{seed}/model_state/{train_config}.pth",
+                    )
+                    test_acc = test_model(
+                        model=model, test_loader=test_loader, device=device
+                    )
+
+                    df = pd.read_csv(f"{work_dir}/{seed}/{train_config}.csv")
+                    quantization_error = df["quantization_error"].mean()
+                    test_results.append(
+                        (f"qat_{quantizer_type}_{bits}", test_acc, quantization_error)
+                    )
+                    print(
+                        f"qat_{quantizer_type}_{bits} = {test_acc * 100:.2f}%, quantization_error = {quantization_error:.10f}"
+                    )
+
+        with open(f"{results_work_dir}/{seed}.csv", mode="w") as f:
+            writer = csv.writer(f)
+            writer.writerow(["model", "test_acc", "quantization_error"])
+            writer.writerows(test_results)
 
 
 if __name__ == "__main__":

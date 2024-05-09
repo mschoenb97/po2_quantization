@@ -35,7 +35,7 @@ $ python download_data.py --dataset=imagenet
 ```
 export LD_LIBRARY_PATH=
 export OMP_NUM_THREADS=1
-torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --model_type=resnet20 --dataset=cifar --quantizer_type=none --bits=4 --num_epochs=164 --batch_size=128 --lr=0.1
+torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --model_type=resnet20 --dataset=cifar --quantizer_type=none --bits=4 --num_epochs=164 --batch_size=128 --lr=0.1 --seed=8
 ```
 
 ### Run train scripts
@@ -43,23 +43,23 @@ torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --model_type=resnet
 For a given model and dataset, perform full precision training then all QAT configurations
 
 ```bash
-./train_launch.sh resnet20 cifar 164 128 0.1
-./train_launch.sh resnet32 cifar 164 128 0.1
-./train_launch.sh resnet44 cifar 164 128 0.1
-./train_launch.sh resnet56 cifar 164 128 0.1
-./train_launch.sh mobilenet cifar 164 128 0.1
-./train_launch.sh mobilevit cifar 164 128 0.1
+./train_launch.sh resnet20 cifar 164 128 0.1 4
+./train_launch.sh resnet32 cifar 164 128 0.1 4
+./train_launch.sh resnet44 cifar 164 128 0.1 4
+./train_launch.sh resnet56 cifar 164 128 0.1 4
+./train_launch.sh mobilenet cifar 164 128 0.1 4
+./train_launch.sh mobilevit cifar 164 128 0.1 4
 
 # only perform full precision training for imagenet
-torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --model_type=resnet56 --dataset=imagenet --quantizer_type=none --bits=4 --num_epochs=164 --batch_size=128 --lr=0.1
-torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --model_type=mobilenet --dataset=imagenet --quantizer_type=none --bits=4 --num_epochs=164 --batch_size=128 --lr=0.1
-torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --model_type=mobilevit --dataset=imagenet --quantizer_type=none --bits=4 --num_epochs=164 --batch_size=128 --lr=0.1
+torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --model_type=resnet56 --dataset=imagenet --quantizer_type=none --bits=4 --num_epochs=164 --batch_size=128 --lr=0.1 --seed=8
+torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --model_type=mobilenet --dataset=imagenet --quantizer_type=none --bits=4 --num_epochs=164 --batch_size=128 --lr=0.1 --seed=8
+torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --model_type=mobilevit --dataset=imagenet --quantizer_type=none --bits=4 --num_epochs=164 --batch_size=128 --lr=0.1 --seed=8
 ```
 
 ### Run test scripts
 
 ```bash
-# get test results for full precision, PTQ and QAT
+# get test results for full precision, PTQ and QAT across all seeds
 python test.py --model_type=resnet20 --dataset=cifar
 python test.py --model_type=resnet32 --dataset=cifar
 python test.py --model_type=resnet44 --dataset=cifar

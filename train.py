@@ -15,9 +15,7 @@ from torch.optim.lr_scheduler import LambdaLR, MultiStepLR
 from torch.utils.data import DataLoader
 from torchmetrics.classification import MulticlassAccuracy
 
-from models.mobile_vit import MobileVIT
-from models.mobilenet import MobileNetV2
-from models.resnet import ResNet20, ResNet32, ResNet44, ResNet56
+from models.model import get_model
 from utils.dataloaders import get_dataloaders
 from utils.quantizers import (
     LinearPowerOfTwoPlusQuantizer,
@@ -28,11 +26,9 @@ from utils.quantizers import (
 
 
 def run_train_loop(
-    model_type: str,
     model: nn.Module,
     device: str,
     train_loader: DataLoader,
-    test_loader: DataLoader,
     model_path: str,
     num_epochs: int,
     lr: float,
@@ -123,30 +119,19 @@ def train_model(
     num_epochs: int,
     lr: float,
     train_loader: DataLoader,
-    test_loader: DataLoader,
     image_size: Tuple[int],
     model_path: str,
     full_precision_model_path: str,
 ) -> List[Tuple[int, float, float, float]]:
     num_classes = len(train_loader.dataset.classes)
 
-    if model_type == "resnet20":
-        model = ResNet20(num_classes=num_classes, quantize_fn=quantizer, bits=bits)
-    elif model_type == "resnet32":
-        model = ResNet32(num_classes=num_classes, quantize_fn=quantizer, bits=bits)
-    elif model_type == "resnet44":
-        model = ResNet44(num_classes=num_classes, quantize_fn=quantizer, bits=bits)
-    elif model_type == "resnet56":
-        model = ResNet56(num_classes=num_classes, quantize_fn=quantizer, bits=bits)
-    elif model_type == "mobilenet":
-        model = MobileNetV2(num_classes=num_classes, quantize_fn=quantizer, bits=bits)
-    elif model_type == "mobilevit":
-        model = MobileVIT(
-            num_classes=num_classes,
-            quantize_fn=quantizer,
-            bits=bits,
-            image_size=image_size,
-        )
+    model = get_model(
+        model_type=model_type,
+        num_classes=num_classes,
+        quantize_fn=quantizer,
+        bits=bits,
+        image_size=image_size,
+    )
 
     local_rank = int(os.environ["LOCAL_RANK"])
     torch.manual_seed(local_rank)  # set different seed for each process
@@ -170,11 +155,9 @@ def train_model(
 
     # perform full precision training or QAT
     train_res = run_train_loop(
-        model_type=model_type,
         model=model,
         device=device,
         train_loader=train_loader,
-        test_loader=test_loader,
         model_path=model_path,
         num_epochs=num_epochs,
         lr=lr,
@@ -191,9 +174,9 @@ def main(
     num_epochs: int,
     batch_size: int,
     lr: float,
-    seed: int = 8,
+    seed: int,
+    train_dir: str = "./train",
     data_dir: str = "./data",
-    results_dir: str = "./results",
 ) -> None:
     """
     Training Configurations:
@@ -204,7 +187,7 @@ def main(
     """
 
     assert (
-        torch.cuda.is_available() and torch.cuda.device_count() >= 4
+        torch.cuda.is_available() and torch.cuda.device_count() >= 1
     ), "invalid hardware"
     assert model_type in [
         "resnet20",
@@ -224,17 +207,12 @@ def main(
     ], "invalid quantizer type"
     assert bits in [2, 3, 4], "invalid number of bits"
 
-    # ie. resnet20_cifar_full_precision.pth, resnet44_imagenet_po2_2.pth
     train_config = (
-        f"{model_type}_{dataset}_full_precision"
-        if quantizer_type == "none"
-        else f"{model_type}_{dataset}_{quantizer_type}_{bits}"
+        "full_precision" if quantizer_type == "none" else f"{quantizer_type}_{bits}"
     )
 
-    full_precision_model_path = (
-        f"{results_dir}/{model_type}_{dataset}_full_precision.pth"
-    )
-    Path(results_dir).mkdir(parents=True, exist_ok=True)
+    work_dir = f"{train_dir}/{dataset}/{model_type}/{seed}"
+    Path(f"{work_dir}/model_state").mkdir(parents=True, exist_ok=True)
 
     quantizer = {
         "none": None,
@@ -257,7 +235,7 @@ def main(
     torch.backends.cudnn.deterministic = False
     torch.backends.cudnn.benchmark = True
 
-    train_loader, test_loader, image_size = get_dataloaders(
+    train_loader, _, image_size = get_dataloaders(
         dataset=dataset,
         data_dir=data_dir,
         batch_size=batch_size,
@@ -274,14 +252,13 @@ def main(
         num_epochs=num_epochs,
         lr=lr,
         train_loader=train_loader,
-        test_loader=test_loader,
         image_size=image_size,
-        model_path=f"{results_dir}/{train_config}.pth",
-        full_precision_model_path=full_precision_model_path,
+        model_path=f"{work_dir}/model_state/{train_config}.pth",
+        full_precision_model_path=f"{work_dir}/model_state/full_precision.pth",
     )
 
     if local_rank == 0:
-        with open(f"{results_dir}/{train_config}.csv", mode="w") as f:
+        with open(f"{work_dir}/{train_config}.csv", mode="w") as f:
             writer = csv.writer(f)
             writer.writerow(["epoch", "train_loss", "train_acc", "quantization_error"])
             writer.writerows(train_results)

@@ -1,4 +1,8 @@
+from typing import Callable, Optional
+
 import torch
+
+from models.quantized_conv import QuantizedConv2d
 
 
 def quantize_per_filter(
@@ -130,3 +134,28 @@ class LinearPowerOfTwoPlusQuantizer(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output):
         return grad_output, None, None
+
+
+def quantize_model(
+    model: torch.nn.Module, quantizer: Optional[Callable[..., None]], bits: int
+) -> float:
+    quant_error, numel = 0.0, 0
+
+    with torch.no_grad():
+        for _, module in model.named_modules():
+            if isinstance(module, QuantizedConv2d):
+                for _, param in module.named_parameters():
+                    quant_param = quantizer.forward(None, param, bits=bits)
+                    quant_error += torch.sum((quant_param - param) ** 2)
+                    numel += param.numel()
+                    param.copy_(quant_param)
+
+    return (quant_error / numel).item()
+
+
+quantizer_dict = {
+    "lin": LinearPowerOfTwoQuantizer,
+    "lin+": LinearPowerOfTwoPlusQuantizer,
+    "po2": PowerOfTwoQuantizer,
+    "po2+": PowerOfTwoPlusQuantizer,
+}

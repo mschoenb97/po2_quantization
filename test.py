@@ -14,50 +14,30 @@ from torch.utils.data import DataLoader
 from models.model import get_model
 from utils.dataloaders import get_dataloaders
 from utils.quantizers import (
-    LinearPowerOfTwoPlusQuantizer,
-    LinearPowerOfTwoQuantizer,
-    PowerOfTwoPlusQuantizer,
-    PowerOfTwoQuantizer,
+    quantize_model,
+    quantizer_dict,
 )
 
-
-def quantize_model(model_type, model, quantizer, bits: int = 4) -> float:
-    quantization_error, numel = 0.0, 0
-
-    with torch.no_grad():
-        for name, param in model.named_parameters():
-            if (
-                ("resnet" in model_type and "conv" in name and "layer" in name)
-                or (
-                    model_type == "mobilenet"
-                    and "conv" in name
-                    and "features" in name
-                    and "features.1" not in name
-                    and len(param.shape) == 4
-                )
-                or (
-                    model_type == "mobilevit"
-                    and "conv" in name
-                    and ("trunk" in name or "stem" in name)
-                    and len(param.shape) == 4
-                )
-            ):
-                quantized_param = quantizer.forward(None, param, bits=bits)
-                quantization_error += torch.sum((quantized_param - param) ** 2)
-                numel += param.numel()
-                param.copy_(quantized_param)
-
-    return (quantization_error / numel).item()
+bits_to_try = [2, 3, 4]
 
 
-def test_model(model: nn.Module, test_loader: DataLoader, device: str) -> None:
+def init() -> None:
+    random.seed(42)
+    np.random.seed(42)
+    torch.manual_seed(42)
+    torch.cuda.manual_seed(42)
+    torch.cuda.manual_seed_all(42)
+    torch.backends.cudnn.deterministic = False
+    torch.backends.cudnn.benchmark = True
+
+
+def test_model(model: nn.Module, test_loader: DataLoader, device: str) -> float:
     correct, total = 0, 0
     model.eval()
 
     with torch.no_grad():
         for images, labels in test_loader:
             images, labels = images.to(device), labels.to(device)
-
             outputs = model(images)
 
             _, predicted = torch.max(outputs.data, 1)
@@ -96,22 +76,7 @@ def main(
     ], "invalid model type"
     assert dataset in ["cifar", "imagenet"], "invalid dataset"
 
-    random.seed(42)
-    np.random.seed(42)
-    torch.manual_seed(42)
-    torch.cuda.manual_seed(42)
-    torch.cuda.manual_seed_all(42)
-    torch.backends.cudnn.deterministic = False
-    torch.backends.cudnn.benchmark = True
     device = torch.device("cuda", 0)
-
-    quantizer_dict = {
-        "lin": LinearPowerOfTwoQuantizer,
-        "lin+": LinearPowerOfTwoPlusQuantizer,
-        "po2": PowerOfTwoQuantizer,
-        "po2+": PowerOfTwoPlusQuantizer,
-    }
-    bits_to_try = [2, 3, 4]
 
     _, test_loader, image_size = get_dataloaders(
         dataset=dataset,
@@ -131,7 +96,6 @@ def main(
     for seed in seeds:
         test_results = []
 
-        # Post Training Quantization: load full precision model and quantize weights
         model = get_model(
             model_type=model_type,
             num_classes=num_classes,
@@ -146,32 +110,30 @@ def main(
         )
 
         # Full Precision Training
-        test_acc = test_model(model=model, test_loader=test_loader, device=device)
-        print(f"full_precision = {test_acc * 100:.2f}%, quantization_error = 0.0")
-        test_results.append(("full_precision", test_acc, 0.0))
+        acc = test_model(model=model, test_loader=test_loader, device=device)
+        print(f"full_precision = {acc * 100:.2f}%, q_error = 0.0")
+        test_results.append(("full_precision", acc, 0.0))
 
         # Post Training Quantization
-        for quantizer_type, quantizer in quantizer_dict.items():
+        for quant_type, quantizer in quantizer_dict.items():
             for bits in bits_to_try:
                 model_copy = deepcopy(model)
-                quantization_error = quantize_model(
-                    model_type, model_copy, quantizer, bits
+                quant_error = quantize_model(
+                    model=model_copy, quantizer=quantizer, bits=bits
                 )
-                test_acc = test_model(
+                acc = test_model(
                     model=model_copy, test_loader=test_loader, device=device
                 )
-                test_results.append(
-                    (f"ptq_{quantizer_type}_{bits}", test_acc, quantization_error)
-                )
+                test_results.append((f"ptq_{quant_type}_{bits}", acc, quant_error))
                 print(
-                    f"ptq_{quantizer_type}_{bits} = {test_acc * 100:.2f}%, quantization_error = {quantization_error:.10f}"
+                    f"ptq_{quant_type}_{bits} = {acc * 100:.2f}%, q_error = {quant_error:.10f}"
                 )
 
         # Quantization Aware Training
         if not skip_qat:
-            for quantizer_type, quantizer in quantizer_dict.items():
+            for quant_type, quantizer in quantizer_dict.items():
                 for bits in bits_to_try:
-                    train_config = f"{quantizer_type}_{bits}"
+                    train_config = f"{quant_type}_{bits}"
                     model = get_model(
                         model_type=model_type,
                         num_classes=num_classes,
@@ -184,17 +146,16 @@ def main(
                         model=model,
                         model_path=f"{work_dir}/{seed}/model_state/{train_config}.pth",
                     )
-                    test_acc = test_model(
+                    acc = test_model(
                         model=model, test_loader=test_loader, device=device
                     )
 
+                    # get average quant_error during QAT
                     df = pd.read_csv(f"{work_dir}/{seed}/{train_config}.csv")
-                    quantization_error = df["quantization_error"].mean()
-                    test_results.append(
-                        (f"qat_{quantizer_type}_{bits}", test_acc, quantization_error)
-                    )
+                    quant_error = df["quantization_error"].mean()
+                    test_results.append((f"qat_{quant_type}_{bits}", acc, quant_error))
                     print(
-                        f"qat_{quantizer_type}_{bits} = {test_acc * 100:.2f}%, quantization_error = {quantization_error:.10f}"
+                        f"qat_{quant_type}_{bits} = {acc * 100:.2f}%, q_error = {quant_error:.10f}"
                     )
 
         with open(f"{results_work_dir}/{seed}.csv", mode="w") as f:

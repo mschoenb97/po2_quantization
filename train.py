@@ -18,11 +18,19 @@ from torchmetrics.classification import MulticlassAccuracy
 from models.model import get_model
 from utils.dataloaders import get_dataloaders
 from utils.quantizers import (
-    LinearPowerOfTwoPlusQuantizer,
-    LinearPowerOfTwoQuantizer,
-    PowerOfTwoPlusQuantizer,
-    PowerOfTwoQuantizer,
+    quantizer_dict,
 )
+
+
+def init(seed: int) -> None:
+    dist.init_process_group(backend="nccl")
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = False
+    torch.backends.cudnn.benchmark = True
 
 
 def run_train_loop(
@@ -37,6 +45,8 @@ def run_train_loop(
     weight_decay: float = 1e-4,
     percent_warmup_epochs: float = 0.1,
 ) -> List[Tuple[int, float, float, float]]:
+    local_rank = int(os.environ["LOCAL_RANK"])
+
     # scale learning rate to accomodate for larger effective batch_size
     lr *= dist.get_world_size()
     warmup_epochs = int(percent_warmup_epochs * num_epochs)
@@ -69,7 +79,6 @@ def run_train_loop(
         for images, labels in train_loader:
             inputs, labels = images.to(device), labels.to(device)
             optimizer.zero_grad()
-
             outputs = model(inputs)
             loss = criterion(outputs, labels)
             total_loss += loss.item() * inputs.size(0)
@@ -91,24 +100,25 @@ def run_train_loop(
         dist.all_reduce(total_loss, op=dist.ReduceOp.SUM)
         dist.all_reduce(total_samples, op=dist.ReduceOp.SUM)
 
-        train_loss = total_loss.item() / total_samples.item()
-        train_accuracy = train_acc.compute().item()  # total acc over all batches
+        loss = total_loss.item() / total_samples.item()
+        acc = train_acc.compute().item()  # total acc over all batches
 
         total_quantization_error, numel = model.module.get_quantization_error()
-        quantization_error = total_quantization_error / numel
-        if type(quantization_error) == torch.Tensor:
-            quantization_error = quantization_error.item()
+        quant_error = total_quantization_error / numel
+        if type(quant_error) == torch.Tensor:
+            quant_error = quant_error.item()
 
-        if int(os.environ["LOCAL_RANK"]) == 0:
+        if local_rank == 0:
             print(
-                f"epoch: {epoch}, train_loss: {train_loss:.4f}, train_acc: {train_accuracy:.4f}, quantization_error: {quantization_error:.10f}"
+                f"epoch: {epoch}, train_loss: {loss:.4f}, train_acc: {acc:.4f}, quantization_error: {quant_error:.10f}"
             )
-        train_results.append((epoch, train_loss, train_accuracy, quantization_error))
+        train_results.append((epoch, loss, acc, quant_error))
         train_acc.reset()  # reset internal state
 
-    if int(os.environ["LOCAL_RANK"]) == 0:
+    if local_rank == 0:
         print(f"saving model at {model_path} 💾")
-    torch.save(model.state_dict(), model_path)
+        torch.save(model.state_dict(), model_path)
+
     return train_results
 
 
@@ -138,9 +148,7 @@ def train_model(
     device = torch.device("cuda", local_rank)
     print(f"{device = } 👨‍💻")
 
-    train_acc = MulticlassAccuracy(
-        num_classes=len(train_loader.dataset.classes), average="micro"
-    ).to(device)
+    train_acc = MulticlassAccuracy(num_classes=num_classes, average="micro").to(device)
     model = model.to(device)
     model = DistributedDataParallel(
         model, device_ids=[local_rank], output_device=local_rank
@@ -214,26 +222,14 @@ def main(
     work_dir = f"{train_dir}/{dataset}/{model_type}/{seed}"
     Path(f"{work_dir}/model_state").mkdir(parents=True, exist_ok=True)
 
-    quantizer = {
-        "none": None,
-        "lin": LinearPowerOfTwoQuantizer,
-        "lin+": LinearPowerOfTwoPlusQuantizer,
-        "po2": PowerOfTwoQuantizer,
-        "po2+": PowerOfTwoPlusQuantizer,
-    }[quantizer_type]
+    quantizer = (
+        quantizer_dict[quantizer_type] if quantizer_type in quantizer_dict else None
+    )
 
     local_rank = int(os.environ["LOCAL_RANK"])
     if local_rank == 0:
         print("initializing distributed environment 😇")
-    dist.init_process_group(backend="nccl")
-
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = False
-    torch.backends.cudnn.benchmark = True
+    init(seed=seed)
 
     train_loader, _, image_size = get_dataloaders(
         dataset=dataset,
@@ -265,6 +261,7 @@ def main(
 
     if local_rank == 0:
         print("destroying distributed environment 😈")
+
     dist.destroy_process_group()
 
 

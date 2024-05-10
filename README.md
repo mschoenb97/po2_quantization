@@ -1,36 +1,41 @@
 # Power of Two Quantization
 
-### Description and Outline
+### Description and Outline 📐
 
 Here we demonstrate the use of the standard power-of-two quantization formula
+
 $$ PO2(x) = 2 ^ {\mathrm{round} (\log_2(x))} $$
+
 against our improved quantization formula
+
 $$ PO2_+(x) = 2 ^ {\mathrm{round} \left(\log_2\left(\sqrt{8/9} \cdot x\right)\right) }.$$
+
 We use ResNet, MobileNet, and MobileVit models, all of which are available in the `models` 
 directory. We also test on CIFAR and ImageNet data, which are available in the `data` and `resnet_data`
 directories. The main launch script is `train_launch.sh`, which we will describe how to use below. 
 
 
-### Create a VM in GCP
+### Create a VM in GCP ☁︎
 
 ```bash
-$ python3 create_vm.py --project_id="high-performance-ml" --vm_name="sleds" --disk_size=100 --gpu_type="nvidia-tesla-t4" --gpu_count=4 --machine_type="n1-standard-8"
+python3 create_vm.py --project_id="high-performance-ml" --vm_name="sleds" --disk_size=100 --gpu_type="nvidia-tesla-t4" --gpu_count=4 --machine_type="n1-standard-8"
 ```
 
-### Install dependencies
+### Install Dependencies
 
 ```bash
-$ pip install -r requirements.txt
-
-### Download data
-
-```bash
-$ python download_data.py --dataset=cifar
-$ huggingface-cli login # enter token first
-$ python download_data.py --dataset=imagenet
+pip install -r requirements.txt
 ```
 
-### Test a single training run
+### Download Data
+
+```bash
+python download_data.py --dataset=cifar
+huggingface-cli login # enter token first
+python download_data.py --dataset=imagenet
+```
+
+### Test a Single Training Run 🏃‍♂️
 
 ```
 export LD_LIBRARY_PATH=
@@ -38,11 +43,12 @@ export OMP_NUM_THREADS=1
 torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --model_type=resnet20 --dataset=cifar --quantizer_type=none --bits=4 --num_epochs=164 --batch_size=128 --lr=0.1 --seed=8
 ```
 
-### Run train scripts
+### Run Train Scripts
 
 For a given model and dataset, perform full precision training then all QAT configurations
 
 ```bash
+# <model_type> <dataset> <num_epochs> <batch_size> <learning_rate> <num_gpus>
 ./train_launch.sh resnet20 cifar 164 128 0.1 4
 ./train_launch.sh resnet32 cifar 164 128 0.1 4
 ./train_launch.sh resnet44 cifar 164 128 0.1 4
@@ -56,7 +62,7 @@ torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --model_type=mobile
 torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --model_type=mobilevit --dataset=imagenet --quantizer_type=none --bits=4 --num_epochs=164 --batch_size=128 --lr=0.1 --seed=8
 ```
 
-### Run test scripts
+### Run Test Scripts 👨‍💻
 
 ```bash
 # get test results for full precision, PTQ and QAT across all seeds

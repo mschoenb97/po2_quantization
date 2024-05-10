@@ -18,7 +18,7 @@ from utils.quantizers import (
     quantizer_dict,
 )
 
-bits_to_try = [2, 3, 4]
+bits_to_try = [3, 4]
 
 
 def init() -> None:
